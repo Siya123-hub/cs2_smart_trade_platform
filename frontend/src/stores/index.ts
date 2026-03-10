@@ -1,46 +1,9 @@
-/**
- * 用户 Store
- */
-import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
-import { authApi, itemsApi, ordersApi, inventoryApi, monitorsApi, statsApi } from '@/utils/api'
-import type { User, Item, Order, Inventory, MonitorTask, DashboardStats } from '@/types'
+export { useUserStore } from './user'
 
-export const useUserStore = defineStore('user', () => {
-  const user = ref<User | null>(null)
-  const token = ref<string | null>(localStorage.getItem('token'))
-  const isLoggedIn = computed(() => !!token.value && !!user.value)
-  
-  async function login(username: string, password: string) {
-    const response: any = await authApi.login(username, password)
-    token.value = response.access_token
-    localStorage.setItem('token', response.access_token)
-    await fetchCurrentUser()
-  }
-  
-  async function fetchCurrentUser() {
-    try {
-      user.value = await authApi.getCurrentUser()
-    } catch (error) {
-      logout()
-    }
-  }
-  
-  function logout() {
-    token.value = null
-    user.value = null
-    localStorage.removeItem('token')
-  }
-  
-  return {
-    user,
-    token,
-    isLoggedIn,
-    login,
-    fetchCurrentUser,
-    logout,
-  }
-})
+import { defineStore } from 'pinia'
+import { ref } from 'vue'
+import { itemsApi, ordersApi, inventoryApi, monitorsApi, statsApi } from '@/utils/api'
+import type { Item, Order, Inventory, MonitorTask, DashboardStats } from '@/types'
 
 // 饰品 Store
 export const useItemsStore = defineStore('items', () => {
@@ -52,21 +15,22 @@ export const useItemsStore = defineStore('items', () => {
   async function fetchItems(params: any = {}) {
     loading.value = true
     try {
-      const response: any = await itemsApi.list(params)
-      items.value = response.items
-      total.value = response.total
+      const res: any = await itemsApi.list(params)
+      items.value = res.data?.items || res.items || []
+      total.value = res.data?.total || res.total || 0
     } finally {
       loading.value = false
     }
   }
   
   async function searchItems(keyword: string) {
-    const response: any = await itemsApi.search(keyword)
-    return response.items
+    const res: any = await itemsApi.search(keyword)
+    return res.data?.items || res.items || []
   }
   
   async function getItem(id: number) {
-    currentItem.value = await itemsApi.get(id)
+    const res: any = await itemsApi.get(id)
+    currentItem.value = res.data || res
     return currentItem.value
   }
   
@@ -90,16 +54,17 @@ export const useOrdersStore = defineStore('orders', () => {
   async function fetchOrders(params: any = {}) {
     loading.value = true
     try {
-      const response: any = await ordersApi.list(params)
-      orders.value = response.orders
-      total.value = response.total
+      const res: any = await ordersApi.list(params)
+      orders.value = res.data?.orders || res.orders || []
+      total.value = res.data?.total || res.total || 0
     } finally {
       loading.value = false
     }
   }
   
   async function createOrder(data: any) {
-    return await ordersApi.create(data)
+    const res: any = await ordersApi.create(data)
+    return res.data || res
   }
   
   async function cancelOrder(orderId: string) {
@@ -126,9 +91,9 @@ export const useInventoryStore = defineStore('inventory', () => {
   async function fetchInventory(params: any = {}) {
     loading.value = true
     try {
-      const response: any = await inventoryApi.list(params)
-      inventory.value = response.inventory || response.items || []
-      total.value = response.total || inventory.value.length
+      const res: any = await inventoryApi.list(params)
+      inventory.value = res.data?.inventory || res.inventory || res.data?.items || res.items || []
+      total.value = res.data?.total || res.total || inventory.value.length
     } finally {
       loading.value = false
     }
@@ -150,7 +115,8 @@ export const useMonitorsStore = defineStore('monitors', () => {
   async function fetchMonitors() {
     loading.value = true
     try {
-      monitors.value = await monitorsApi.list()
+      const res: any = await monitorsApi.list()
+      monitors.value = res.data || res || []
     } finally {
       loading.value = false
     }
@@ -183,7 +149,8 @@ export const useStatsStore = defineStore('stats', () => {
   async function fetchDashboard() {
     loading.value = true
     try {
-      dashboard.value = await statsApi.dashboard()
+      const res: any = await statsApi.dashboard()
+      dashboard.value = res.data || res
     } finally {
       loading.value = false
     }
