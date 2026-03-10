@@ -19,6 +19,7 @@ from app.schemas.item import (
     PriceHistoryResponse,
     PriceHistoryListResponse,
 )
+from app.utils.validators import validate_item_id, validate_price, validate_limit
 
 router = APIRouter()
 
@@ -101,6 +102,9 @@ async def search_items(
     db: AsyncSession = Depends(get_db),
 ):
     """搜索饰品"""
+    # 使用验证器验证参数
+    validated_limit = validate_limit(limit)
+    
     # 转义特殊字符防止 LIKE 注入
     escaped_keyword = keyword.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
     search_pattern = f"%{escaped_keyword}%"
@@ -123,7 +127,7 @@ async def search_items(
             Item.name_cn.ilike(search_pattern, escape='\\'),
             Item.market_hash_name.ilike(search_pattern, escape='\\')
         )
-    ).limit(limit)
+    ).limit(validated_limit)
     
     result = await db.execute(query)
     items = result.scalars().all()

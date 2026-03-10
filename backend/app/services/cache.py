@@ -247,18 +247,11 @@ class RedisCache:
             import asyncio
             loop = asyncio.get_event_loop()
             if loop.is_running():
-                # 在异步环境中，需要调用异步版本
-                import warnings
-                warnings.warn(
-                    "Synchronous cache.get() called in async context. "
-                    "Use cache.agest() for async access.",
-                    DeprecationWarning,
-                    stacklevel=2
-                )
-                # 回退：创建新的事件循环来执行
+                # 在异步环境中，直接调用异步版本并返回结果
+                # 注意：这是在同步函数中调用异步函数的特殊处理
                 import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor() as pool:
-                    future = pool.submit(self._sync_get, key)
+                    future = pool.submit(asyncio.run, self.aget(key, default))
                     return future.result(timeout=5)
             
             # 同步获取（用于初始化等场景）
