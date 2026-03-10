@@ -23,9 +23,10 @@ class Bot(Base):
     username = Column(String(100), nullable=True)  # Steam 用户名
     
     # 认证信息 (加密存储)
-    session_token = Column(Text, nullable=True)
-    ma_file = Column(Text, nullable=True)  # Steam MaFile JSON
-    access_token = Column(Text, nullable=True)
+    # 加密后的字段
+    session_token_encrypted = Column(Text, nullable=True, comment="加密存储")
+    ma_file_encrypted = Column(Text, nullable=True, comment="加密存储")
+    access_token_encrypted = Column(Text, nullable=True, comment="加密存储")
     
     # 状态
     status = Column(String(20), default='offline', index=True)  # offline/online/trading/error
@@ -51,6 +52,49 @@ class Bot(Base):
 
     # 关联
     # monitor_tasks = relationship("MonitorTask", back_populates="bot")
+
+    # 属性：用于解密访问
+    @property
+    def session_token(self) -> str:
+        """解密获取 session_token"""
+        from app.core.encryption import decrypt_sensitive_data
+        return decrypt_sensitive_data(self.session_token_encrypted or "")
+    
+    @session_token.setter
+    def session_token(self, value: str):
+        """加密存储 session_token"""
+        from app.core.encryption import encrypt_sensitive_data
+        self.session_token_encrypted = encrypt_sensitive_data(value)
+    
+    @property
+    def ma_file(self) -> str:
+        """解密获取 ma_file"""
+        from app.core.encryption import decrypt_sensitive_data
+        return decrypt_sensitive_data(self.ma_file_encrypted or "")
+    
+    @ma_file.setter
+    def ma_file(self, value: str):
+        """加密存储 ma_file"""
+        from app.core.encryption import encrypt_sensitive_data
+        self.ma_file_encrypted = encrypt_sensitive_data(value)
+    
+    @property
+    def access_token(self) -> str:
+        """解密获取 access_token"""
+        from app.core.encryption import decrypt_sensitive_data
+        return decrypt_sensitive_data(self.access_token_encrypted or "")
+    
+    @access_token.setter
+    def access_token(self, value: str):
+        """加密存储 access_token"""
+        from app.core.encryption import encrypt_sensitive_data
+        self.access_token_encrypted = encrypt_sensitive_data(value)
+    
+    def clear_sensitive_data(self):
+        """清除敏感数据（用于安全退出）"""
+        self.session_token_encrypted = None
+        self.ma_file_encrypted = None
+        self.access_token_encrypted = None
 
     def __repr__(self):
         return f"<Bot {self.name} status={self.status}>"

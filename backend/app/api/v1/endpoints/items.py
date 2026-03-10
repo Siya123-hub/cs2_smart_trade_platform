@@ -5,7 +5,7 @@
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_, and_
+from sqlalchemy import select, or_, and_, func
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
@@ -37,20 +37,31 @@ async def get_items(
     db: AsyncSession = Depends(get_db),
 ):
     """获取饰品列表"""
-    # 构建查询
-    query = select(Item)
-    
-    # 筛选条件
+    # 构建基础查询条件
+    conditions = []
     if category:
-        query = query.where(Item.category == category)
+        conditions.append(Item.category == category)
     if rarity:
-        query = query.where(Item.rarity == rarity)
+        conditions.append(Item.rarity == rarity)
     if exterior:
-        query = query.where(Item.exterior == exterior)
+        conditions.append(Item.exterior == exterior)
     if min_price is not None:
-        query = query.where(Item.current_price >= min_price)
+        conditions.append(Item.current_price >= min_price)
     if max_price is not None:
-        query = query.where(Item.current_price <= max_price)
+        conditions.append(Item.current_price <= max_price)
+    
+    # 使用 func.count() 获取总数
+    count_query = select(func.count()).select_from(Item)
+    if conditions:
+        count_query = count_query.where(and_(*conditions))
+    
+    count_result = await db.execute(count_query)
+    total = count_result.scalar() or 0
+    
+    # 构建分页查询
+    query = select(Item)
+    if conditions:
+        query = query.where(and_(*conditions))
     
     # 排序
     if sort_by == "current_price":
@@ -75,22 +86,6 @@ async def get_items(
     result = await db.execute(query)
     items = result.scalars().all()
     
-    # 获取总数
-    count_query = select(Item)
-    if category:
-        count_query = count_query.where(Item.category == category)
-    if rarity:
-        count_query = count_query.where(Item.rarity == rarity)
-    if exterior:
-        count_query = count_query.where(Item.exterior == exterior)
-    if min_price is not None:
-        count_query = count_query.where(Item.current_price >= min_price)
-    if max_price is not None:
-        count_query = count_query.where(Item.current_price <= max_price)
-    
-    count_result = await db.execute(count_query)
-    total = len(count_result.scalars().all())
-    
     return {
         "items": items,
         "total": total,
@@ -106,6 +101,17 @@ async def search_items(
     db: AsyncSession = Depends(get_db),
 ):
     """搜索饰品"""
+    # 使用 func.count() 获取总数
+    count_query = select(func.count()).select_from(Item).where(
+        or_(
+            Item.name.ilike(f"%{keyword}%"),
+            Item.name_cn.ilike(f"%{keyword}%"),
+            Item.market_hash_name.ilike(f"%{keyword}%")
+        )
+    )
+    count_result = await db.execute(count_query)
+    total = count_result.scalar() or 0
+    
     query = select(Item).where(
         or_(
             Item.name.ilike(f"%{keyword}%"),
@@ -117,7 +123,7 @@ async def search_items(
     result = await db.execute(query)
     items = result.scalars().all()
     
-    return {"items": items, "total": len(items)}
+    return {"items": items, "total": total}
 
 
 @router.get("/{item_id}", response_model=ItemResponse)

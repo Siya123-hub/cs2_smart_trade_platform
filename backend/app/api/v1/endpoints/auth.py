@@ -2,8 +2,11 @@
 """
 认证端点
 """
+import time
+import logging
 from datetime import timedelta
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Dict
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -27,7 +30,68 @@ from app.schemas.user import (
     UserUpdate,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
+# 登录尝试记录: {username: [timestamp1, timestamp2, ...]}
+_login_attempts: Dict[str, list] = {}
+# 锁定账户记录: {username: unlock_timestamp}
+_locked_accounts: Dict[str, float] = {}
+
+
+def _cleanup_old_attempts(username: str, max_age_seconds: int = 900):
+    """清理旧的登录尝试记录"""
+    current_time = time.time()
+    if username in _login_attempts:
+        _login_attempts[username] = [
+            ts for ts in _login_attempts[username]
+            if current_time - ts < max_age_seconds
+        ]
+        if not _login_attempts[username]:
+            del _login_attempts[username]
+
+
+def _check_login_attempts(username: str) -> bool:
+    """检查是否超过登录尝试限制"""
+    current_time = time.time()
+    _cleanup_old_attempts(username)
+    
+    # 检查是否被锁定
+    if username in _locked_accounts:
+        if current_time < _locked_accounts[username]:
+            remaining = int(_locked_accounts[username] - current_time)
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"登录尝试过多，请 {remaining} 秒后重试"
+            )
+        else:
+            # 解除锁定
+            del _locked_accounts[username]
+            if username in _login_attempts:
+                del _login_attempts[username]
+    
+    # 检查尝试次数
+    if username in _login_attempts:
+        attempts = len(_login_attempts[username])
+        if attempts >= settings.LOGIN_MAX_ATTEMPTS:
+            # 锁定账户
+            _locked_accounts[username] = current_time + (settings.LOGIN_LOCKOUT_MINUTES * 60)
+            logger.warning(f"账户 {username} 因登录尝试过多已被锁定 {settings.LOGIN_LOCKOUT_MINUTES} 分钟")
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"登录尝试过多，账户已被锁定 {settings.LOGIN_LOCKOUT_MINUTES} 分钟"
+            )
+    
+    return True
+
+
+def _record_login_attempt(username: str):
+    """记录登录尝试"""
+    current_time = time.time()
+    if username not in _login_attempts:
+        _login_attempts[username] = []
+    _login_attempts[username].append(current_time)
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
@@ -76,13 +140,21 @@ async def login(
     db: AsyncSession = Depends(get_db)
 ):
     """用户登录"""
+    username = form_data.username
+    
+    # 检查登录尝试限制
+    _check_login_attempts(username)
+    
     # 查找用户
     result = await db.execute(
-        select(User).where(User.username == form_data.username)
+        select(User).where(User.username == username)
     )
     user = result.scalar_one_or_none()
     
     if not user or not verify_password(form_data.password, user.hashed_password):
+        # 记录失败的登录尝试
+        _record_login_attempt(username)
+        logger.warning(f"登录失败: {username}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="用户名或密码错误",
@@ -95,12 +167,18 @@ async def login(
             detail="账户已被禁用"
         )
     
+    # 登录成功，清除尝试记录
+    if username in _login_attempts:
+        del _login_attempts[username]
+    
     # 创建访问令牌
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": str(user.id)},
         expires_delta=access_token_expires
     )
+    
+    logger.info(f"用户登录成功: {username}")
     
     return {"access_token": access_token, "token_type": "bearer"}
 

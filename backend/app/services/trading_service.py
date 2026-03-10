@@ -82,10 +82,8 @@ class TradingEngine:
         if not self.buff_client:
             raise Exception("未设置 BUFF 客户端")
         
-        # 如果没有提供 user_id，使用默认值（应该从上下文获取）
         if user_id is None:
-            logger.warning("execute_buy 未提供 user_id，使用默认值")
-            user_id = 1
+            raise ValueError("execute_buy 必须提供 user_id 参数")
         
         # 获取饰品信息
         result = await self.db.execute(

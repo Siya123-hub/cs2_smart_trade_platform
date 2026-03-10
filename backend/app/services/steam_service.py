@@ -3,24 +3,35 @@
 Steam API 服务
 """
 import asyncio
-import aiohttp
+import logging
 from typing import Optional, Dict, List, Any
 
+import aiohttp
+
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class SteamAPI:
     """Steam API 客户端"""
     
-    def __init__(self, api_key: Optional[str] = None):
+    # 默认超时配置
+    DEFAULT_TIMEOUT = aiohttp.ClientTimeout(total=30, connect=10)
+    
+    def __init__(self, api_key: Optional[str] = None, timeout: Optional[aiohttp.ClientTimeout] = None):
         self.api_key = api_key or settings.STEAM_API_KEY
         self.base_url = "https://api.steampowered.com"
         self.market_url = "https://steamcommunity.com/market"
-        self.session = aiohttp.ClientSession()
+        self.session = aiohttp.ClientSession(timeout=timeout or self.DEFAULT_TIMEOUT)
     
     async def close(self):
         """关闭会话"""
         await self.session.close()
+    
+    async def cleanup(self):
+        """清理资源"""
+        await self.close()
     
     async def _request(
         self,
@@ -34,11 +45,27 @@ class SteamAPI:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         })
         
-        async with self.session.get(url, params=params, headers=headers, **kwargs) as response:
-            if response.status != 200:
-                raise Exception(f"Steam API Error: {response.status}")
-            
-            return await response.json()
+        timeout = kwargs.pop("timeout", None)
+        
+        try:
+            async with self.session.get(
+                url, 
+                params=params, 
+                headers=headers, 
+                timeout=timeout or self.DEFAULT_TIMEOUT,
+                **kwargs
+            ) as response:
+                if response.status != 200:
+                    logger.error(f"Steam API Error: {response.status}")
+                    raise Exception(f"Steam API Error: {response.status}")
+                
+                return await response.json()
+        except asyncio.TimeoutError:
+            logger.error(f"Steam API 请求超时: {url}")
+            raise
+        except aiohttp.ClientError as e:
+            logger.error(f"Steam API 连接错误: {e}")
+            raise
     
     async def get_player_summaries(self, steam_ids: List[str]) -> List[Dict[str, Any]]:
         """获取玩家基本信息"""
@@ -73,7 +100,8 @@ class SteamAPI:
         try:
             data = await self._request(url, params=params)
             return data
-        except Exception:
+        except Exception as e:
+            logger.warning(f"获取价格概览失败: {market_hash_name}, 错误: {e}")
             return None
     
     async def get_listings(
@@ -96,7 +124,8 @@ class SteamAPI:
         try:
             data = await self._request(url, params=params)
             return data
-        except Exception:
+        except Exception as e:
+            logger.warning(f"获取市场挂单失败: {market_hash_name}, 错误: {e}")
             return None
     
     async def get_price_histogram(
@@ -117,7 +146,8 @@ class SteamAPI:
         try:
             data = await self._request(url, params=params)
             return data
-        except Exception:
+        except Exception as e:
+            logger.warning(f"获取价格直方图失败: {market_hash_name}, 错误: {e}")
             return None
 
 

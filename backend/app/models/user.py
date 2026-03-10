@@ -20,13 +20,13 @@ class User(Base):
     
     # Steam 账户信息
     steam_id = Column(String(64), unique=True, index=True, nullable=True)
-    steam_cookie = Column(Text, nullable=True)  # 加密存储
+    steam_cookie_encrypted = Column(Text, nullable=True, comment="加密存储")
     
     # BUFF 账户信息
-    buff_cookie = Column(Text, nullable=True)  # 加密存储
+    buff_cookie_encrypted = Column(Text, nullable=True, comment="加密存储")
     
-    # Steam 令牌 (MaFile JSON)
-    ma_file = Column(Text, nullable=True)
+    # Steam 令牌 (MaFile JSON) - 加密存储
+    ma_file_encrypted = Column(Text, nullable=True, comment="加密存储")
     
     # 账户余额
     balance = Column(Numeric(12, 2), default=0)
@@ -43,6 +43,49 @@ class User(Base):
     orders = relationship("Order", back_populates="user")
     inventory = relationship("Inventory", back_populates="user")
     monitors = relationship("MonitorTask", back_populates="user")
+
+    # 属性：用于解密访问
+    @property
+    def steam_cookie(self) -> str:
+        """解密获取 steam_cookie"""
+        from app.core.encryption import decrypt_sensitive_data
+        return decrypt_sensitive_data(self.steam_cookie_encrypted or "")
+    
+    @steam_cookie.setter
+    def steam_cookie(self, value: str):
+        """加密存储 steam_cookie"""
+        from app.core.encryption import encrypt_sensitive_data
+        self.steam_cookie_encrypted = encrypt_sensitive_data(value)
+    
+    @property
+    def buff_cookie(self) -> str:
+        """解密获取 buff_cookie"""
+        from app.core.encryption import decrypt_sensitive_data
+        return decrypt_sensitive_data(self.buff_cookie_encrypted or "")
+    
+    @buff_cookie.setter
+    def buff_cookie(self, value: str):
+        """加密存储 buff_cookie"""
+        from app.core.encryption import encrypt_sensitive_data
+        self.buff_cookie_encrypted = encrypt_sensitive_data(value)
+    
+    @property
+    def ma_file(self) -> str:
+        """解密获取 ma_file"""
+        from app.core.encryption import decrypt_sensitive_data
+        return decrypt_sensitive_data(self.ma_file_encrypted or "")
+    
+    @ma_file.setter
+    def ma_file(self, value: str):
+        """加密存储 ma_file"""
+        from app.core.encryption import encrypt_sensitive_data
+        self.ma_file_encrypted = encrypt_sensitive_data(value)
+    
+    def clear_sensitive_data(self):
+        """清除敏感数据"""
+        self.steam_cookie_encrypted = None
+        self.buff_cookie_encrypted = None
+        self.ma_file_encrypted = None
 
     def __repr__(self):
         return f"<User {self.username}>"

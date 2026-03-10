@@ -217,9 +217,12 @@ class PriceMonitor:
         condition_type: str,
         threshold: float,
         action: Optional[str] = None,
-        user_id: int = 1
+        user_id: int = None
     ) -> MonitorTask:
         """创建监控任务"""
+        if user_id is None:
+            raise ValueError("create_monitor_task 必须提供 user_id 参数")
+        
         task = MonitorTask(
             name=name,
             item_id=item_id,

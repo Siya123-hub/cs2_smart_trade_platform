@@ -8,12 +8,16 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core.database import engine, Base
+from app.core.encryption import encryption_manager
 from app.api.v1.router import api_router
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
+    # 启动时初始化加密模块
+    encryption_manager.initialize()
+    
     # 启动时创建数据库表
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

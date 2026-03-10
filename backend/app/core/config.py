@@ -2,9 +2,11 @@
 """
 应用配置
 """
+import os
 from functools import lru_cache
 from typing import Optional
 from pydantic_settings import BaseSettings
+from pydantic import Field
 
 
 class Settings(BaseSettings):
@@ -12,7 +14,7 @@ class Settings(BaseSettings):
 
     # 应用基础配置
     APP_NAME: str = "CS2 Trade Platform"
-    DEBUG: bool = True
+    DEBUG: bool = Field(default=False, description="调试模式，生产环境必须设为 False")
     API_V1_PREFIX: str = "/api/v1"
 
     # 数据库配置
@@ -24,10 +26,13 @@ class Settings(BaseSettings):
     # CORS 配置
     ALLOWED_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
     
-    # JWT 配置
-    SECRET_KEY: str = "your-secret-key-change-in-production"
+    # JWT 配置 - 必须从环境变量读取
+    SECRET_KEY: str = Field(default="", description="JWT 密钥，必须在环境变量中设置")
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24小时
+
+    # 加密密钥 - 用于敏感信息加密
+    ENCRYPTION_KEY: str = Field(default="", description="加密密钥，必须在环境变量中设置")
 
     # Steam 配置
     STEAM_API_KEY: Optional[str] = None
@@ -47,9 +52,23 @@ class Settings(BaseSettings):
     PRICE_UPDATE_INTERVAL_MEDIUM: int = 30  # 一般饰品 30秒
     PRICE_UPDATE_INTERVAL_LOW: int = 300    # 冷门饰品 5分钟
 
+    # 登录限制配置
+    LOGIN_MAX_ATTEMPTS: int = 5  # 最大登录尝试次数
+    LOGIN_LOCKOUT_MINUTES: int = 15  # 锁定时间（分钟）
+
     class Config:
         env_file = ".env"
         case_sensitive = True
+        extra = "allow"  # 允许额外字段
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # 验证必需的配置
+        if not self.DEBUG and not self.SECRET_KEY:
+            raise ValueError("生产环境必须设置 SECRET_KEY 环境变量")
+        if not self.ENCRYPTION_KEY:
+            import warnings
+            warnings.warn("未设置 ENCRYPTION_KEY，敏感数据将使用临时密钥加密")
 
 
 @lru_cache()

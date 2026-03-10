@@ -5,6 +5,7 @@ BUFF API 服务
 import asyncio
 import hashlib
 import time
+import logging
 from typing import Optional, Dict, List, Any
 from datetime import datetime
 
@@ -12,13 +13,20 @@ import aiohttp
 
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
+
 
 class BuffAPI:
     """BUFF API 客户端"""
     
-    def __init__(self, cookie: Optional[str] = None):
+    # 类级别的默认超时配置
+    DEFAULT_TIMEOUT = aiohttp.ClientTimeout(total=30, connect=10)
+    MAX_RETRIES = 3
+    RETRY_DELAY = 5  # 429 重试延迟（秒）
+    
+    def __init__(self, cookie: Optional[str] = None, timeout: Optional[aiohttp.ClientTimeout] = None):
         self.base_url = settings.BUFF_BASE_URL
-        self.session = aiohttp.ClientSession()
+        self.session = aiohttp.ClientSession(timeout=timeout or self.DEFAULT_TIMEOUT)
         self.cookie = cookie
         self.last_request_time = 0
         self.min_interval = settings.BUFF_API_INTERVAL
@@ -27,47 +35,78 @@ class BuffAPI:
         """关闭会话"""
         await self.session.close()
     
+    async def cleanup(self):
+        """清理资源"""
+        await self.close()
+    
     async def _request(
         self,
         method: str,
         url: str,
+        max_retries: int = None,
         **kwargs
     ) -> Dict[str, Any]:
-        """发送请求 (带频率控制)"""
-        # 频率控制
-        elapsed = time.time() - self.last_request_time
-        if elapsed < self.min_interval:
-            await asyncio.sleep(self.min_interval - elapsed)
+        """发送请求 (带频率控制和重试机制)"""
+        max_retries = max_retries or self.MAX_RETRIES
+        retry_count = 0
         
-        # 设置默认 headers
-        headers = kwargs.pop("headers", {})
-        headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer": self.base_url,
-        })
-        if self.cookie:
-            headers["Cookie"] = self.cookie
+        while retry_count <= max_retries:
+            try:
+                # 频率控制
+                elapsed = time.time() - self.last_request_time
+                if elapsed < self.min_interval:
+                    await asyncio.sleep(self.min_interval - elapsed)
+                
+                # 设置默认 headers
+                headers = kwargs.pop("headers", {})
+                headers.update({
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Referer": self.base_url,
+                })
+                if self.cookie:
+                    headers["Cookie"] = self.cookie
+                
+                kwargs["headers"] = headers
+                
+                # 发送请求
+                async with self.session.request(method, url, **kwargs) as response:
+                    self.last_request_time = time.time()
+                    
+                    if response.status == 429:
+                        # 请求过于频繁，等待后重试
+                        retry_count += 1
+                        if retry_count > max_retries:
+                            raise Exception(f"BUFF API 429 错误: 超过最大重试次数 {max_retries}")
+                        logger.warning(f"BUFF API 429 错误，第 {retry_count} 次重试...")
+                        await asyncio.sleep(self.RETRY_DELAY * retry_count)
+                        continue
+                    
+                    if response.status != 200:
+                        raise Exception(f"BUFF API Error: {response.status}")
+                    
+                    data = await response.json()
+                    
+                    if data.get("code") != "OK":
+                        raise Exception(f"BUFF API Error: {data.get('message', 'Unknown error')}")
+                    
+                    return data.get("data", {})
+                    
+            except asyncio.TimeoutError:
+                retry_count += 1
+                if retry_count > max_retries:
+                    raise Exception(f"BUFF API 请求超时: 超过最大重试次数 {max_retries}")
+                logger.warning(f"BUFF API 请求超时，第 {retry_count} 次重试...")
+                await asyncio.sleep(1)
+                continue
+            except aiohttp.ClientError as e:
+                retry_count += 1
+                if retry_count > max_retries:
+                    raise Exception(f"BUFF API 连接错误: {e}")
+                logger.warning(f"BUFF API 连接错误: {e}，第 {retry_count} 次重试...")
+                await asyncio.sleep(1)
+                continue
         
-        kwargs["headers"] = headers
-        
-        # 发送请求
-        async with self.session.request(method, url, **kwargs) as response:
-            self.last_request_time = time.time()
-            
-            if response.status == 429:
-                # 请求过于频繁，等待后重试
-                await asyncio.sleep(5)
-                return await self._request(method, url, **kwargs)
-            
-            if response.status != 200:
-                raise Exception(f"BUFF API Error: {response.status}")
-            
-            data = await response.json()
-            
-            if data.get("code") != "OK":
-                raise Exception(f"BUFF API Error: {data.get('message', 'Unknown error')}")
-            
-            return data.get("data", {})
+        raise Exception("BUFF API 请求失败: 达到最大重试次数")
     
     async def get_goods_list(
         self,

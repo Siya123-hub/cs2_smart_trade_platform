@@ -332,9 +332,28 @@ async def get_bot_inventory(
             detail="机器人不存在"
         )
     
-    # TODO: 实现实际的库存获取逻辑
-    # 这里返回空列表作为占位
-    items = []
+    # 从数据库获取该机器人的库存
+    from app.models.inventory import Inventory
+    inventory_result = await db.execute(
+        select(Inventory).where(
+            Inventory.bot_id == bot_id,
+            Inventory.status == 'available'
+        )
+    )
+    inventory_items = inventory_result.scalars().all()
+    
+    # 转换为响应格式
+    items = [
+        {
+            "id": item.id,
+            "market_hash_name": item.market_hash_name,
+            "price": item.cost_price,
+            "marketable": item.marketable,
+            "tradable": item.tradable,
+            "inspect_in": item.inspect_in
+        }
+        for item in inventory_items
+    ]
     
     return BotInventoryResponse(
         items=items,
