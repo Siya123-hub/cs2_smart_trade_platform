@@ -75,10 +75,10 @@ class MonitorTask(Base):
 
 
 class MonitorLog(Base):
-    """监控日志ename__ = "monitor_logs"
+    """监控日志模型"""
+    __tablename__ = "monitor_logs"
 
-   """
-    __tabl id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, index=True)
     task_id = Column(Integer, ForeignKey("monitor_tasks.id"), nullable=False, index=True)
     
     # 触发信息

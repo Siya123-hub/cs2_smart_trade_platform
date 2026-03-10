@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     # Redis 配置
     REDIS_URL: str = "redis://localhost:6379/0"
 
+    # CORS 配置
+    ALLOWED_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
+    
     # JWT 配置
     SECRET_KEY: str = "your-secret-key-change-in-production"
     ALGORITHM: str = "HS256"

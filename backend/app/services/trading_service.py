@@ -75,11 +75,17 @@ class TradingEngine:
         self,
         item_id: int,
         max_price: float,
-        quantity: int = 1
+        quantity: int = 1,
+        user_id: int = None
     ) -> Dict[str, Any]:
         """执行买入"""
         if not self.buff_client:
             raise Exception("未设置 BUFF 客户端")
+        
+        # 如果没有提供 user_id，使用默认值（应该从上下文获取）
+        if user_id is None:
+            logger.warning("execute_buy 未提供 user_id，使用默认值")
+            user_id = 1
         
         # 获取饰品信息
         result = await self.db.execute(
@@ -114,7 +120,7 @@ class TradingEngine:
             # 创建本地订单记录
             order = Order(
                 order_id=f"BUY-{datetime.utcnow().timestamp()}",
-                user_id=1,  # TODO: 从上下文获取
+                user_id=user_id,
                 item_id=item_id,
                 side="buy",
                 price=price,

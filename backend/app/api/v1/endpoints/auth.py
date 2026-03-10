@@ -15,7 +15,9 @@ from app.core.security import (
     get_password_hash,
     create_access_token,
     get_current_user,
+    oauth2_scheme,
 )
+from app.core.token_blacklist import add_token_to_blacklist
 from app.models.user import User
 from app.schemas.user import (
     UserCreate,
@@ -104,9 +106,13 @@ async def login(
 
 
 @router.post("/logout")
-async def logout(current_user: User = Depends(get_current_user)):
-    """用户登出"""
-    # 在实际应用中，应该使令牌失效
+async def logout(
+    current_user: User = Depends(get_current_user),
+    token: str = Depends(oauth2_scheme)
+):
+    """用户登出 - 使 token 失效"""
+    # 将 token 加入黑名单
+    await add_token_to_blacklist(token)
     return {"message": "登出成功"}
 
 

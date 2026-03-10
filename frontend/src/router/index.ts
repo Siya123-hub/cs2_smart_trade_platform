@@ -4,7 +4,7 @@ import type { RouteRecordRaw } from 'vue-router'
 const routes: RouteRecordRaw[] = [
   {
     path: '/',
-    redirect: '/login'
+    redirect: '/dashboard'
   },
   {
     path: '/login',
@@ -15,6 +15,36 @@ const routes: RouteRecordRaw[] = [
     path: '/dashboard',
     name: 'Dashboard',
     component: () => import('@/views/Dashboard.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/inventory',
+    name: 'Inventory',
+    component: () => import('@/views/Inventory.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/orders',
+    name: 'Orders',
+    component: () => import('@/views/Orders.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/market',
+    name: 'Market',
+    component: () => import('@/views/Market.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/automation',
+    name: 'Automation',
+    component: () => import('@/views/Automation.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/stats',
+    name: 'Stats',
+    component: () => import('@/views/Stats.vue'),
     meta: { requiresAuth: true }
   }
 ]

@@ -34,9 +34,10 @@ def create_app() -> FastAPI:
     )
 
     # CORS 配置
+    allowed_origins = settings.ALLOWED_ORIGINS.split(",") if settings.ALLOWED_ORIGINS else ["http://localhost:5173"]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # 生产环境应限制域名
+        allow_origins=allowed_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

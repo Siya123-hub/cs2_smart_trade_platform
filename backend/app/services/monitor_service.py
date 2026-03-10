@@ -185,8 +185,28 @@ class PriceMonitor:
                 
                 # 执行动作
                 if task.action == "auto_buy":
-                    # TODO: 执行自动买入
-                    pass
+                    # 执行自动买入
+                    try:
+                        from app.services.trading_service import TradingEngine
+                        
+                        trading_engine = TradingEngine(self.db)
+                        
+                        # 从任务配置中获取最大买入价格
+                        max_price = float(task.threshold)
+                        
+                        # 执行买入（传递 user_id）
+                        buy_result = await trading_engine.execute_buy(
+                            item_id=item.id,
+                            max_price=max_price,
+                            user_id=task.user_id
+                        )
+                        
+                        if buy_result.get("success"):
+                            log.message += f" | 自动买入成功: {buy_result.get('order_id')}"
+                        else:
+                            log.message += f" | 自动买入失败: {buy_result.get('message')}"
+                    except Exception as e:
+                        log.message += f" | 自动买入异常: {str(e)}"
                 
                 await self.db.commit()
     

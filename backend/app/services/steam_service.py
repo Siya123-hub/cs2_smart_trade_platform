@@ -57,8 +57,8 @@ class SteamAPI:
     
     async def get_price_overview(
         self,
-        app_id: int = 730,
         market_hash_name: str,
+        app_id: int = 730,
         currency: int = 1  # 1=USD, 2=GBP, 3=...
     ) -> Optional[Dict[str, Any]]:
         """获取市场价格概览"""
@@ -78,8 +78,8 @@ class SteamAPI:
     
     async def get_listings(
         self,
-        app_id: int = 730,
         market_hash_name: str,
+        app_id: int = 730,
         start: int = 0,
         count: int = 10
     ) -> Optional[Dict[str, Any]]:
@@ -101,8 +101,8 @@ class SteamAPI:
     
     async def get_price_histogram(
         self,
-        app_id: int = 730,
         market_hash_name: str,
+        app_id: int = 730,
         currency: int = 1
     ) -> Optional[Dict[str, Any]]:
         """获取价格直方图 (历史数据)"""
@@ -207,3 +207,7 @@ def get_steam_api() -> SteamAPI:
     if _steam_api is None:
         _steam_api = SteamAPI()
     return _steam_api
+
+
+# 别名兼容
+SteamService = SteamAPI

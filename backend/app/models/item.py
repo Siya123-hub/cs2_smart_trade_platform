@@ -3,7 +3,7 @@
 饰品模型
 """
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Numeric, DateTime, Text, Index, Float
+from sqlalchemy import Column, Integer, String, Numeric, DateTime, Text, Index, Float, ForeignKey
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
@@ -50,7 +50,7 @@ class Item(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # 关联
-    price_history = relationship("PriceHistory", back_populates="item", order_by="desc(PriceHistory.recorded_at)")
+    price_history = relationship("PriceHistory", back_populates="item", order_by="desc(PriceHistory.recorded_at)", foreign_keys="PriceHistory.item_id")
     orders = relationship("Order", back_populates="item")
     inventory = relationship("Inventory", back_populates="item")
 
@@ -63,7 +63,7 @@ class PriceHistory(Base):
     __tablename__ = "price_history"
 
     id = Column(Integer, primary_key=True, index=True)
-    item_id = Column(Integer, nullable=False, index=True)
+    item_id = Column(Integer, ForeignKey("items.id"), nullable=False, index=True)
     
     # 价格来源
     source = Column(String(20), nullable=False)  # 'buff' / 'steam'

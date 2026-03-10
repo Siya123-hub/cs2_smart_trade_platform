@@ -84,8 +84,11 @@ python -m venv venv
 source venv/bin/activate  # Linux/Mac
 # 或 venv\Scripts\activate  # Windows
 
-# 安装依赖
+# ⚠️ 重要：在虚拟环境中安装依赖（推荐使用 Python 3.8-3.11）
 pip install -r backend/requirements.txt
+
+# ⚠️ 注意：如果 bcrypt 版本不兼容，手动安装兼容版本
+# pip install "bcrypt>=4.0.0,<5.0.0"
 
 # 配置环境变量
 cp backend/.env.example backend/.env
