@@ -4,7 +4,8 @@ Steam API 服务
 """
 import asyncio
 import logging
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Set
+from contextlib import asynccontextmanager
 
 import aiohttp
 
@@ -23,14 +24,31 @@ class SteamAPI:
         self.api_key = api_key or settings.STEAM_API_KEY
         self.base_url = "https://api.steampowered.com"
         self.market_url = "https://steamcommunity.com/market"
-        self.session = aiohttp.ClientSession(timeout=timeout or self.DEFAULT_TIMEOUT)
+        self._session: Optional[aiohttp.ClientSession] = None
+    
+    @property
+    def session(self) -> aiohttp.ClientSession:
+        """获取或创建 session（延迟初始化）"""
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(timeout=self.DEFAULT_TIMEOUT)
+        return self._session
     
     async def close(self):
         """关闭会话"""
-        await self.session.close()
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
     
     async def cleanup(self):
         """清理资源"""
+        await self.close()
+    
+    async def __aenter__(self):
+        """异步上下文管理器入口"""
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """异步上下文管理器出口"""
         await self.close()
     
     async def _request(

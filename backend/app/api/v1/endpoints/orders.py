@@ -5,7 +5,8 @@
 from typing import Optional, List
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
+from sqlalchemy import select, func, and_
+from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
 from app.core.security import get_current_user
@@ -35,16 +36,28 @@ async def get_orders(
     db: AsyncSession = Depends(get_db),
 ):
     """获取订单列表"""
-    query = select(Order).where(Order.user_id == current_user.id)
+    # 构建基础过滤条件
+    filters = [Order.user_id == current_user.id]
     
     if status:
-        query = query.where(Order.status == status)
+        filters.append(Order.status == status)
     if side:
-        query = query.where(Order.side == side)
+        filters.append(Order.side == side)
     if source:
-        query = query.where(Order.source == source)
+        filters.append(Order.source == source)
     
-    query = query.order_by(Order.created_at.desc())
+    # 使用 func.count() 获取总数（不加载所有数据到内存）
+    count_query = select(func.count()).select_from(Order).where(and_(*filters))
+    count_result = await db.execute(count_query)
+    total = count_result.scalar() or 0
+    
+    # 使用 selectinload 预加载关联数据，避免 N+1 查询
+    query = (
+        select(Order)
+        .where(and_(*filters))
+        .options(selectinload(Order.user), selectinload(Order.item))
+        .order_by(Order.created_at.desc())
+    )
     
     # 分页
     offset = (page - 1) * page_size
@@ -52,14 +65,6 @@ async def get_orders(
     
     result = await db.execute(query)
     orders = result.scalars().all()
-    
-    # 获取总数
-    count_query = select(Order).where(Order.user_id == current_user.id)
-    if status:
-        count_query = count_query.where(Order.status == status)
-    
-    count_result = await db.execute(count_query)
-    total = len(count_result.scalars().all())
     
     return {
         "orders": orders,

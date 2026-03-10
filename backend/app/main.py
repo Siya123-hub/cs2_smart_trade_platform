@@ -4,6 +4,7 @@ CS2 智能交易平台 - 后端入口
 """
 from contextlib import asynccontextmanager
 import json
+from typing import Optional
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -17,11 +18,28 @@ from app.api.v1.endpoints.monitoring import metrics_middleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.middleware.audit import audit_middleware
+from app.services.steam_service import SteamAPI
+import logging
+
+logger = logging.getLogger(__name__)
+
+# 全局 SteamAPI 实例
+_steam_api: Optional[SteamAPI] = None
+
+
+def get_steam_api() -> SteamAPI:
+    """获取全局 SteamAPI 实例"""
+    global _steam_api
+    if _steam_api is None:
+        _steam_api = SteamAPI()
+    return _steam_api
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
+    global _steam_api
+    
     # 初始化日志配置
     init_logging(log_file="logs/app.log")
     
@@ -31,8 +49,20 @@ async def lifespan(app: FastAPI):
     # 启动时创建数据库表
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    
+    # 启动时初始化 SteamAPI（延迟创建 session）
+    _steam_api = SteamAPI()
+    logger.info("SteamAPI initialized")
+    
     yield
-    # 关闭时清理资源
+    
+    # 关闭时清理 SteamAPI 资源
+    if _steam_api:
+        await _steam_api.cleanup()
+        _steam_api = None
+        logger.info("SteamAPI cleaned up")
+    
+    # 关闭时清理数据库连接
     await engine.dispose()
 
 
