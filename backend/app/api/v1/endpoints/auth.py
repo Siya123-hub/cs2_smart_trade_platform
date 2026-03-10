@@ -2,6 +2,7 @@
 """
 认证端点
 """
+import re
 import time
 import logging
 from datetime import timedelta
@@ -38,6 +39,45 @@ router = APIRouter()
 _login_attempts: Dict[str, list] = {}
 # 锁定账户记录: {username: unlock_timestamp}
 _locked_accounts: Dict[str, float] = {}
+
+
+def validate_password_strength(password: str) -> tuple[bool, str]:
+    """
+    验证密码强度
+    
+    要求:
+    - 最小长度 8 字符
+    - 必须包含大小写字母、数字、特殊字符中的至少2种
+    
+    返回: (是否通过, 错误消息)
+    """
+    if len(password) < 8:
+        return False, "密码长度至少为 8 个字符"
+    
+    # 检查字符类型
+    has_lowercase = bool(re.search(r'[a-z]', password))
+    has_uppercase = bool(re.search(r'[A-Z]', password))
+    has_digit = bool(re.search(r'\d', password))
+    has_special = bool(re.search(r'[!@#$%^&*()_+\-=\[\]{};:\'",.<>?/\\|`~]', password))
+    
+    # 统计包含的种类数
+    types_count = sum([has_lowercase, has_uppercase, has_digit, has_special])
+    
+    if types_count < 2:
+        # 构建错误提示
+        missing_types = []
+        if not has_lowercase:
+            missing_types.append("小写字母")
+        if not has_uppercase:
+            missing_types.append("大写字母")
+        if not has_digit:
+            missing_types.append("数字")
+        if not has_special:
+            missing_types.append("特殊字符(!@#$%^&*等)")
+        
+        return False, f"密码必须包含至少2种字符类型，当前缺少: {', '.join(missing_types)}"
+    
+    return True, ""
 
 
 def _cleanup_old_attempts(username: str, max_age_seconds: int = 900):
@@ -100,6 +140,14 @@ async def register(
     db: AsyncSession = Depends(get_db)
 ):
     """用户注册"""
+    # 验证密码强度
+    is_valid, error_msg = validate_password_strength(user_data.password)
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=error_msg
+        )
+    
     # 检查用户名是否已存在
     result = await db.execute(
         select(User).where(User.username == user_data.username)

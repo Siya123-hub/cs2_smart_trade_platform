@@ -50,7 +50,7 @@ class BuffAPI:
         max_retries = max_retries or self.MAX_RETRIES
         retry_count = 0
         
-        while retry_count <= max_retries:
+        while retry_count < max_retries:
             try:
                 # 频率控制
                 elapsed = time.time() - self.last_request_time

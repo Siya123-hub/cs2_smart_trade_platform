@@ -101,12 +101,16 @@ async def search_items(
     db: AsyncSession = Depends(get_db),
 ):
     """搜索饰品"""
+    # 参数化查询，防止SQL注入
+    # 使用 bindparam 或让 SQLAlchemy 自动处理参数
+    search_pattern = f"%{keyword}%"
+    
     # 使用 func.count() 获取总数
     count_query = select(func.count()).select_from(Item).where(
         or_(
-            Item.name.ilike(f"%{keyword}%"),
-            Item.name_cn.ilike(f"%{keyword}%"),
-            Item.market_hash_name.ilike(f"%{keyword}%")
+            Item.name.ilike(search_pattern),
+            Item.name_cn.ilike(search_pattern),
+            Item.market_hash_name.ilike(search_pattern)
         )
     )
     count_result = await db.execute(count_query)
@@ -114,9 +118,9 @@ async def search_items(
     
     query = select(Item).where(
         or_(
-            Item.name.ilike(f"%{keyword}%"),
-            Item.name_cn.ilike(f"%{keyword}%"),
-            Item.market_hash_name.ilike(f"%{keyword}%")
+            Item.name.ilike(search_pattern),
+            Item.name_cn.ilike(search_pattern),
+            Item.market_hash_name.ilike(search_pattern)
         )
     ).limit(limit)
     

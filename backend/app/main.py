@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.core.database import engine, Base
 from app.core.encryption import encryption_manager
 from app.api.v1.router import api_router
+from app.api.v1.endpoints.monitoring import metrics_middleware
 
 
 @asynccontextmanager
@@ -49,6 +50,9 @@ def create_app() -> FastAPI:
 
     # 注册路由
     app.include_router(api_router, prefix="/api/v1")
+
+    # 添加指标收集中间件
+    app.middleware("http")(metrics_middleware)
 
     @app.get("/")
     async def root():
