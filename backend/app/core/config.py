@@ -56,6 +56,22 @@ class Settings(BaseSettings):
     LOGIN_MAX_ATTEMPTS: int = 5  # 最大登录尝试次数
     LOGIN_LOCKOUT_MINUTES: int = 15  # 锁定时间（分钟）
 
+    # Rate Limiting 配置
+    RATE_LIMIT_ENABLED: bool = Field(default=True)  # 是否启用限流
+    RATE_LIMIT_DEFAULT_REQUESTS: int = 60  # 默认每分钟请求数
+    RATE_LIMIT_DEFAULT_WINDOW: int = 60  # 默认窗口（秒）
+    RATE_LIMIT_DEFAULT_BURST: int = 10  # 默认突发限制
+    TESTING: bool = Field(default=False)  # 测试模式标志
+    
+    # 限流端点配置（JSON格式字符串）
+    RATE_LIMIT_ENDPOINTS: str = """{
+        "/api/v1/auth/login": {"requests": 5, "window": 60, "burst": 3},
+        "/api/v1/auth/register": {"requests": 3, "window": 300, "burst": 1},
+        "/api/v1/orders": {"requests": 120, "window": 60, "burst": 20},
+        "/api/v1/monitoring": {"requests": 300, "window": 60, "burst": 50},
+        "/api/v1/bots": {"requests": 100, "window": 60, "burst": 15}
+    }"""
+
     class Config:
         env_file = ".env"
         case_sensitive = True

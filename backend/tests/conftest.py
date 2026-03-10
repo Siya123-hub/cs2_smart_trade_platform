@@ -4,11 +4,16 @@
 """
 import pytest
 import asyncio
+import os
 from typing import AsyncGenerator
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.pool import StaticPool
 import pytest_asyncio
+
+# 设置环境变量在导入app之前
+os.environ["RATE_LIMIT_ENABLED"] = "false"
+os.environ["TESTING"] = "true"
 
 from app.main import app
 from app.core.database import Base, get_db

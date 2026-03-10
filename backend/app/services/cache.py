@@ -34,26 +34,27 @@ class MemoryCache:
         self._hits = 0
         self._misses = 0
     
-    def get(self, key: str) -> Optional[Any]:
+    def get(self, key: str, default: Any = None) -> Optional[Any]:
         """
         获取缓存值
         
         Args:
             key: 缓存键
+            default: 不存在时返回的默认值
             
         Returns:
-            缓存值，如果不存在或已过期返回 None
+            缓存值，如果不存在或已过期返回 default
         """
         with self._lock:
             if key not in self._cache:
                 self._misses += 1
-                return None
+                return default
             
             entry = self._cache[key]
             if entry.is_expired():
                 del self._cache[key]
                 self._misses += 1
-                return None
+                return default
             
             self._hits += 1
             return entry.value

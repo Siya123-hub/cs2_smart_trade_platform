@@ -6,7 +6,7 @@ import re
 import time
 import logging
 from datetime import timedelta
-from typing import Dict
+from typing import Dict, Tuple
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,7 +41,7 @@ _login_attempts: Dict[str, list] = {}
 _locked_accounts: Dict[str, float] = {}
 
 
-def validate_password_strength(password: str) -> tuple[bool, str]:
+def validate_password_strength(password: str) -> Tuple[bool, str]:
     """
     验证密码强度
     

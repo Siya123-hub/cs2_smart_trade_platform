@@ -3,6 +3,7 @@
 CS2 智能交易平台 - 后端入口
 """
 from contextlib import asynccontextmanager
+import json
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -11,6 +12,9 @@ from app.core.database import engine, Base
 from app.core.encryption import encryption_manager
 from app.api.v1.router import api_router
 from app.api.v1.endpoints.monitoring import metrics_middleware
+from app.middleware.security_headers import SecurityHeadersMiddleware
+from app.middleware.rate_limit import RateLimitMiddleware
+from app.middleware.audit import audit_middleware
 
 
 @asynccontextmanager
@@ -48,11 +52,22 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    # 安全头部中间件
+    app.add_middleware(SecurityHeadersMiddleware)
+
+    # Rate Limiting 中间件 (测试环境禁用 - 基于DEBUG标志)
+    if settings.RATE_LIMIT_ENABLED and not settings.TESTING:
+        rate_limit_config = json.loads(settings.RATE_LIMIT_ENDPOINTS)
+        app.add_middleware(RateLimitMiddleware, config=rate_limit_config)
+
     # 注册路由
     app.include_router(api_router, prefix="/api/v1")
 
     # 添加指标收集中间件
     app.middleware("http")(metrics_middleware)
+
+    # 添加审计日志中间件
+    app.middleware("http")(audit_middleware)
 
     @app.get("/")
     async def root():

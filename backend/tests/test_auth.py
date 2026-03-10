@@ -13,11 +13,56 @@ async def test_register(client: AsyncClient):
         "/api/v1/auth/register",
         json={
             "username": "testuser",
-            "password": "testpass123",
+            "password": "Testpass123",  # 符合强度要求
             "email": "test@example.com"
         }
     )
     assert response.status_code in [201, 400]  # 201 成功或 400 用户已存在
+
+
+@pytest.mark.asyncio
+async def test_register_weak_password(client: AsyncClient):
+    """测试弱密码注册"""
+    response = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "username": "newuser",
+            "password": "weak"  # 密码太短 - Pydantic 会先拦截
+        }
+    )
+    assert response.status_code == 422  # Pydantic 验证失败
+
+
+@pytest.mark.asyncio
+async def test_register_password_missing_types(client: AsyncClient):
+    """测试缺少字符类型的密码"""
+    response = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "username": "newuser2",
+            "password": "abcdefgh"  # 8字符但只有小写字母
+        }
+    )
+    assert response.status_code == 400
+    data = response.json()["detail"]
+    assert "数字" in data or "特殊字符" in data
+
+
+@pytest.mark.asyncio
+async def test_register_password_exactly_8_chars_valid(client: AsyncClient):
+    """测试正好8字符且满足强度要求"""
+    # 注意: 由于rate limit，需要等待更长时间
+    import asyncio
+    await asyncio.sleep(2)  # 等待rate limit窗口过期
+    
+    response = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "username": "validuser3",  # 使用不同的用户名避免冲突
+            "password": "Abcd1234"  # 8字符，大小写+数字
+        }
+    )
+    assert response.status_code == 201
 
 
 @pytest.mark.asyncio
@@ -28,7 +73,7 @@ async def test_login(client: AsyncClient):
         "/api/v1/auth/register",
         json={
             "username": "testuser",
-            "password": "testpass123"
+            "password": "Testpass123"
         }
     )
     
@@ -37,7 +82,7 @@ async def test_login(client: AsyncClient):
         "/api/v1/auth/login",
         data={
             "username": "testuser",
-            "password": "testpass123"
+            "password": "Testpass123"
         }
     )
     assert response.status_code in [200, 401]
