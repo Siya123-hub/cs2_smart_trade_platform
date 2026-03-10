@@ -1,0 +1,229 @@
+# -*- coding: utf-8 -*-
+"""
+饰品端点
+"""
+from typing import Optional, List
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, or_, and_
+from sqlalchemy.orm import selectinload
+
+from app.core.database import get_db
+from app.core.security import get_current_user
+from app.models.user import User
+from app.models.item import Item, PriceHistory
+from app.schemas.item import (
+    ItemResponse,
+    ItemListResponse,
+    ItemSearchRequest,
+    PriceHistoryResponse,
+    PriceHistoryListResponse,
+)
+
+router = APIRouter()
+
+
+@router.get("", response_model=ItemListResponse)
+async def get_items(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    category: Optional[str] = None,
+    rarity: Optional[str] = None,
+    exterior: Optional[str] = None,
+    min_price: Optional[float] = None,
+    max_price: Optional[float] = None,
+    sort_by: str = "current_price",
+    sort_order: str = "asc",
+    db: AsyncSession = Depends(get_db),
+):
+    """获取饰品列表"""
+    # 构建查询
+    query = select(Item)
+    
+    # 筛选条件
+    if category:
+        query = query.where(Item.category == category)
+    if rarity:
+        query = query.where(Item.rarity == rarity)
+    if exterior:
+        query = query.where(Item.exterior == exterior)
+    if min_price is not None:
+        query = query.where(Item.current_price >= min_price)
+    if max_price is not None:
+        query = query.where(Item.current_price <= max_price)
+    
+    # 排序
+    if sort_by == "current_price":
+        order_col = Item.current_price
+    elif sort_by == "volume_24h":
+        order_col = Item.volume_24h
+    elif sort_by == "price_change_percent":
+        order_col = Item.price_change_percent
+    else:
+        order_col = Item.id
+    
+    if sort_order == "desc":
+        query = query.order_by(order_col.desc())
+    else:
+        query = query.order_by(order_col.asc())
+    
+    # 分页
+    offset = (page - 1) * page_size
+    query = query.offset(offset).limit(page_size)
+    
+    # 执行查询
+    result = await db.execute(query)
+    items = result.scalars().all()
+    
+    # 获取总数
+    count_query = select(Item)
+    if category:
+        count_query = count_query.where(Item.category == category)
+    if rarity:
+        count_query = count_query.where(Item.rarity == rarity)
+    if exterior:
+        count_query = count_query.where(Item.exterior == exterior)
+    if min_price is not None:
+        count_query = count_query.where(Item.current_price >= min_price)
+    if max_price is not None:
+        count_query = count_query.where(Item.current_price <= max_price)
+    
+    count_result = await db.execute(count_query)
+    total = len(count_result.scalars().all())
+    
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
+@router.get("/search")
+async def search_items(
+    keyword: str = Query(..., min_length=1),
+    limit: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    """搜索饰品"""
+    query = select(Item).where(
+        or_(
+            Item.name.ilike(f"%{keyword}%"),
+            Item.name_cn.ilike(f"%{keyword}%"),
+            Item.market_hash_name.ilike(f"%{keyword}%")
+        )
+    ).limit(limit)
+    
+    result = await db.execute(query)
+    items = result.scalars().all()
+    
+    return {"items": items, "total": len(items)}
+
+
+@router.get("/{item_id}", response_model=ItemResponse)
+async def get_item(
+    item_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """获取饰品详情"""
+    result = await db.execute(
+        select(Item).where(Item.id == item_id)
+    )
+    item = result.scalar_one_or_none()
+    
+    if not item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="饰品不存在"
+        )
+    
+    return item
+
+
+@router.get("/{item_id}/price", response_model=PriceHistoryListResponse)
+async def get_price_history(
+    item_id: int,
+    source: Optional[str] = Query(None, regex="^(buff|steam)$"),
+    days: int = Query(7, ge=1, le=90),
+    db: AsyncSession = Depends(get_db),
+):
+    """获取价格历史"""
+    from datetime import datetime, timedelta
+    
+    # 验证饰品存在
+    result = await db.execute(
+        select(Item).where(Item.id == item_id)
+    )
+    item = result.scalar_one_or_none()
+    if not item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="饰品不存在"
+        )
+    
+    # 查询价格历史
+    query = select(PriceHistory).where(
+        PriceHistory.item_id == item_id,
+        PriceHistory.recorded_at >= datetime.utcnow() - timedelta(days=days)
+    )
+    
+    if source:
+        query = query.where(PriceHistory.source == source)
+    
+    query = query.order_by(PriceHistory.recorded_at.desc())
+    
+    result = await db.execute(query)
+    price_history = result.scalars().all()
+    
+    return {
+        "data": price_history,
+        "item_id": item_id,
+        "source": source or "all"
+    }
+
+
+@router.get("/{item_id}/overview")
+async def get_price_overview(
+    item_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """获取价格概览 (BUFF vs Steam)"""
+    result = await db.execute(
+        select(Item).where(Item.id == item_id)
+    )
+    item = result.scalar_one_or_none()
+    
+    if not item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="饰品不存在"
+        )
+    
+    # 计算搬砖利润
+    arbitrage_profit = None
+    arbitrage_percent = None
+    
+    if item.current_price and item.steam_lowest_price:
+        # Steam 出售需要扣除 15% 手续费
+        steam_sell_price = item.steam_lowest_price * 0.85
+        arbitrage_profit = steam_sell_price - item.current_price
+        if item.current_price > 0:
+            arbitrage_percent = (arbitrage_profit / item.current_price) * 100
+    
+    # 价格趋势
+    price_trend = "stable"
+    if item.price_change_percent > 1:
+        price_trend = "up"
+    elif item.price_change_percent < -1:
+        price_trend = "down"
+    
+    return {
+        "item_id": item.id,
+        "market_hash_name": item.market_hash_name,
+        "buff_price": item.current_price,
+        "steam_price": item.steam_lowest_price,
+        "arbitrage_profit": arbitrage_profit,
+        "arbitrage_percent": arbitrage_percent,
+        "volume_24h": item.volume_24h,
+        "price_trend": price_trend,
+    }

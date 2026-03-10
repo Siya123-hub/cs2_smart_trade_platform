@@ -1,0 +1,45 @@
+# CS2 Trade Platform - Backend Requirements
+
+# FastAPI
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.6
+
+# 数据库
+sqlalchemy[asyncio]>=2.0.25
+asyncpg>=0.29.0
+alembic>=1.13.0
+
+# Redis
+redis>=5.0.1
+aioredis>=2.0.1
+
+# 认证
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+
+# HTTP 客户端
+aiohttp>=3.9.1
+
+# 数据验证
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# 任务队列
+celery>=5.3.4
+
+# 日志
+python-json-logger>=2.0.7
+
+# 工具
+python-dotenv>=1.0.0
+httpx>=0.26.0
+
+# 开发依赖
+pytest>=7.4.0
+pytest-asyncio>=0.23.0
+pytest-cov>=4.1.0
+black>=23.12.0
+isort>=5.13.0
+flake8>=7.0.0
+mypy>=1.8.0
