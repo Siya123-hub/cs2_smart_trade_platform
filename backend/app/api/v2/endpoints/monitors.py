@@ -299,7 +299,39 @@ async def trigger_monitor(
             detail="请先启用监控任务"
         )
     
-    # TODO: 实现实际的监控触发逻辑
+    # 实现实际的监控触发逻辑
+    # 根据监控类型执行相应的检查
+    try:
+        if monitor.monitor_type == 'price':
+            # 价格监控：检查目标价格是否达到
+            from app.services.pricing import PricingService
+            pricing_service = PricingService()
+            # 获取最新价格并比较
+            current_price = await pricing_service.get_item_price(monitor.target_url)
+            if current_price and current_price <= float(monitor.threshold_price or 0):
+                monitor.trigger_count += 1
+                monitor.last_triggered = datetime.utcnow()
+        elif monitor.monitor_type == 'inventory':
+            # 库存监控：检查库存变化
+            from app.services.steam import SteamService
+            steam_service = SteamService()
+            inventory = await steam_service.get_inventory(monitor.bot_id)
+            if inventory:
+                monitor.trigger_count += 1
+                monitor.last_triggered = datetime.utcnow()
+        elif monitor.monitor_type == 'profit':
+            # 利润监控：检查利润机会
+            from app.services.buff import BuffService
+            buff_service = BuffService()
+            opportunities = await buff_service.check_profit_opportunities()
+            if opportunities:
+                monitor.trigger_count += 1
+                monitor.last_triggered = datetime.utcnow()
+    except Exception as e:
+        # 记录错误但不影响主流程
+        import logging
+        logging.error(f"监控触发失败: {str(e)}")
+    
     monitor.last_triggered = datetime.utcnow()
     monitor.updated_at = datetime.utcnow()
     

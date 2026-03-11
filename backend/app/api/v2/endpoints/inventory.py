@@ -179,17 +179,81 @@ async def sync_inventory(
     db: AsyncSession = Depends(get_db)
 ):
     """同步库存 v2"""
-    # TODO: 实现实际的平台库存同步逻辑
+    # 实现实际的平台库存同步逻辑
+    synced_count = 0
     
-    # 获取当前库存
+    if platform == 'steam':
+        # Steam库存同步
+        try:
+            from app.services.steam import SteamService
+            steam_service = SteamService()
+            # 获取用户的机器人
+            from app.models.bot import Bot
+            bots_result = await db.execute(
+                select(Bot).where(Bot.owner_id == current_user.id)
+            )
+            bots = bots_result.scalars().all()
+            
+            for bot in bots:
+                inventory_data = await steam_service.get_inventory(bot.id)
+                if inventory_data:
+                    for item in inventory_data:
+                        existing = await db.execute(
+                            select(Inventory).where(
+                                Inventory.asset_id == item.get('asset_id'),
+                                Inventory.user_id == current_user.id
+                            )
+                        )
+                        if existing.scalar_one_or_none():
+                            continue
+                        new_inv = Inventory(
+                            user_id=current_user.id,
+                            bot_id=bot.id,
+                            asset_id=item.get('asset_id'),
+                            market_hash_name=item.get('market_hash_name', ''),
+                            price=item.get('price', 0.0),
+                            quantity=item.get('quantity', 1)
+                        )
+                        db.add(new_inv)
+                        synced_count += 1
+        except Exception as e:
+            import logging
+            logging.error(f"Steam同步失败: {str(e)}")
+    
+    elif platform == 'buff':
+        # BUFF库存同步
+        try:
+            from app.services.buff import BuffService
+            buff_service = BuffService()
+            buff_inventory = await buff_service.get_inventory(current_user.id)
+            
+            for item in buff_inventory:
+                existing = await db.execute(
+                    select(Inventory).where(
+                        Inventory.market_hash_name == item.get('market_hash_name'),
+                        Inventory.user_id == current_user.id
+                    )
+                )
+                if existing.scalar_one_or_none():
+                    continue
+                new_inv = Inventory(
+                    user_id=current_user.id,
+                    market_hash_name=item.get('market_hash_name', ''),
+                    price=item.get('price', 0.0),
+                    quantity=item.get('quantity', 1)
+                )
+                db.add(new_inv)
+                synced_count += 1
+        except Exception as e:
+            import logging
+            logging.error(f"BUFF同步失败: {str(e)}")
+    
+    # 获取同步后的总库存
     result = await db.execute(
         select(func.count(Inventory.id))
         .where(Inventory.user_id == current_user.id)
     )
     current_count = result.scalar() or 0
-    
-    # 模拟同步
-    synced_count = 0  # 实际应从平台API获取
     
     return SyncInventoryResponse(
         platform=platform,

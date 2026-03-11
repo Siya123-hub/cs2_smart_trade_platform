@@ -210,17 +210,56 @@ async def start_bot(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="机器人缺少认证信息"
         )
-    
-    # TODO: 实现实际的机器人启动逻辑
-    # 这里只是更新状态
-    bot.status = 'online'
-    bot.last_online = datetime.utcnow()
-    bot.updated_at = datetime.utcnow()
-    
-    await db.commit()
-    await db.refresh(bot)
-    
-    return bot
+
+    # 实现实际的机器人启动逻辑
+    try:
+        # 使用 SteamTrade 服务启动机器人连接
+        from app.services.steam_service import SteamTrade
+        
+        steam_trade = SteamTrade(
+            steam_id=bot.steam_id or "",
+            session_token=bot.session_token,
+            ma_file=bot.ma_file
+        )
+        
+        # 尝试登录
+        login_success = await steam_trade.login()
+        
+        if not login_success:
+            bot.status = 'error'
+            bot.last_error = "登录失败，请检查认证信息"
+            await db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="机器人登录失败，请检查认证信息"
+            )
+        
+        # 登录成功，更新状态
+        bot.status = 'online'
+        bot.last_online = datetime.utcnow()
+        bot.last_activity = datetime.utcnow()
+        bot.last_error = None  # 清除之前的错误
+        bot.updated_at = datetime.utcnow()
+        
+        await db.commit()
+        await db.refresh(bot)
+        
+        logger.info(f"机器人 {bot.name} (ID: {bot.id}) 启动成功")
+        
+        return bot
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"机器人启动失败: {e}")
+        bot.status = 'error'
+        bot.last_error = str(e)
+        await db.commit()
+        
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"机器人启动失败: {str(e)}"
+        )
 
 
 @router.post("/{bot_id}/stop", response_model=BotResponse)
@@ -250,14 +289,33 @@ async def stop_bot(
             detail="机器人已停止"
         )
     
-    # TODO: 实现实际的机器人停止逻辑
-    bot.status = 'offline'
-    bot.updated_at = datetime.utcnow()
-    
-    await db.commit()
-    await db.refresh(bot)
-    
-    return bot
+    # 实现实际的机器人停止逻辑
+    try:
+        # 清理敏感数据（安全退出）
+        bot.clear_sensitive_data()
+        
+        # 更新状态
+        bot.status = 'offline'
+        bot.last_activity = datetime.utcnow()
+        bot.updated_at = datetime.utcnow()
+        
+        await db.commit()
+        await db.refresh(bot)
+        
+        logger.info(f"机器人 {bot.name} (ID: {bot.id}) 已停止")
+        
+        return bot
+        
+    except Exception as e:
+        logger.error(f"机器人停止失败: {e}")
+        bot.status = 'error'
+        bot.last_error = str(e)
+        await db.commit()
+        
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"机器人停止失败: {str(e)}"
+        )
 
 
 @router.post("/{bot_id}/restart", response_model=BotResponse)
@@ -316,13 +374,89 @@ async def get_bot_inventory(
             detail="机器人不存在"
         )
     
-    # TODO: 实现实际的库存获取逻辑
-    # 返回模拟数据
-    return BotInventoryResponse(
-        bot_id=bot_id,
-        items=[],
-        total=0
-    )
+    # 实现实际的库存获取逻辑
+    # 从 Steam API 或数据库获取库存
+    try:
+        from app.services.steam_service import SteamTrade
+        from app.models.item import Item
+        
+        items = []
+        
+        # 如果机器人在线，从 Steam API 获取实时库存
+        if bot.status == 'online' and bot.session_token:
+            try:
+                steam_trade = SteamTrade(
+                    steam_id=bot.steam_id or "",
+                    session_token=bot.session_token,
+                    ma_file=bot.ma_file
+                )
+                
+                # 获取 Steam 库存
+                steam_inventory = await steam_trade.get_inventory(
+                    app_id=730,  # CS2
+                    context_id=2
+                )
+                
+                # 转换为响应格式并关联本地物品数据
+                for inv_item in steam_inventory:
+                    # 尝试从本地数据库获取物品信息
+                    item_result = await db.execute(
+                        select(Item).where(
+                            Item.class_id == str(inv_item.get('classid', ''))
+                        )
+                    )
+                    local_item = item_result.scalar_one_or_none()
+                    
+                    items.append(BotInventoryItem(
+                        asset_id=str(inv_item.get('assetid', '')),
+                        class_id=str(inv_item.get('classid', '')),
+                        instance_id=str(inv_item.get('instanceid', '')),
+                        amount=int(inv_item.get('amount', 1)),
+                        name=local_item.name if local_item else inv_item.get('name', 'Unknown'),
+                        market_hash_name=local_item.market_hash_name if local_item else inv_item.get('market_hash_name', ''),
+                        price=local_item.current_price if local_item else None,
+                        float_value=inv_item.get('float_value')
+                    ))
+                    
+            except Exception as e:
+                logger.warning(f"从Steam API获取库存失败，使用本地数据: {e}")
+        
+        # 如果没有获取到库存或机器人不在线，从本地数据库获取
+        if not items:
+            # 查询用户库存（通过 bot 关联的用户）
+            from app.models.inventory import Inventory
+            inventory_result = await db.execute(
+                select(Inventory, Item).join(
+                    Item, Inventory.item_id == Item.id
+                ).where(
+                    Inventory.user_id == bot.owner_id
+                ).offset(skip).limit(limit)
+            )
+            
+            for inv, item in inventory_result.all():
+                items.append(BotInventoryItem(
+                    asset_id=inv.asset_id or '',
+                    class_id=inv.class_id or '',
+                    instance_id=inv.instance_id or '',
+                    amount=inv.amount,
+                    name=item.name,
+                    market_hash_name=item.market_hash_name,
+                    price=float(item.current_price) if item.current_price else None,
+                    float_value=inv.float_value
+                ))
+        
+        return BotInventoryResponse(
+            bot_id=bot_id,
+            items=items,
+            total_count=len(items)
+        )
+        
+    except Exception as e:
+        logger.error(f"获取库存失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取库存失败: {str(e)}"
+        )
 
 
 @router.get("/{bot_id}/trades", response_model=List[BotTradeResponse])
