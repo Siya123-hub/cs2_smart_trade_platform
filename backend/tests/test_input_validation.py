@@ -3,7 +3,7 @@
 输入验证测试
 """
 import pytest
-from app.services.trading_service import (
+from app.utils.validators import (
     validate_price,
     validate_quantity,
     validate_item_id,
