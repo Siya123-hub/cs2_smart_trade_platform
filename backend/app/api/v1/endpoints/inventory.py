@@ -2,6 +2,7 @@
 """
 库存端点
 """
+import logging
 from typing import List, Optional
 from fastapi import APIRouter, Depends, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +28,7 @@ from app.schemas.inventory import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/", response_model=InventoryListResponse)
@@ -121,7 +123,7 @@ async def sync_inventory(
                         added_count += 1
                 
             except Exception as e:
-                print(f"同步机器人 {bot.name} 库存失败: {e}")
+                logger.warning(f"同步机器人 {bot.name} 库存失败: {e}")
                 continue
         
         await db.commit()
