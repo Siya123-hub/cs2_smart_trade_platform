@@ -42,10 +42,15 @@ class RedisManager:
             self._redis_client = None
             logger.info("Redis client closed")
     
-    @property
-    def is_connected(self) -> bool:
+    async def is_connected(self) -> bool:
         """检查是否已连接"""
-        return self._redis_client is not None
+        if self._redis_client is None:
+            return False
+        try:
+            await self._redis_client.ping()
+            return True
+        except Exception:
+            return False
 
 
 # 全局实例

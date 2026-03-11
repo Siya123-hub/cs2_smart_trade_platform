@@ -311,6 +311,18 @@ class RedisCache:
         except Exception as e:
             logger.error(f"Redis set error: {e}")
     
+    async def aset(self, key: str, value: Any, ttl: int = 300) -> None:
+        """异步设置缓存值"""
+        if not self._connected:
+            return
+        
+        try:
+            redis = self._get_redis()
+            if redis:
+                await redis.setex(key, ttl, json.dumps(value))
+        except Exception as e:
+            logger.error(f"Redis async set error: {e}")
+    
     def delete(self, key: str) -> bool:
         """删除缓存"""
         if not self._connected:
@@ -326,6 +338,20 @@ class RedisCache:
             logger.error(f"Redis delete error: {e}")
             return False
     
+    async def adelete(self, key: str) -> bool:
+        """异步删除缓存"""
+        if not self._connected:
+            return False
+        
+        try:
+            redis = self._get_redis()
+            if redis:
+                result = await redis.delete(key)
+                return result > 0
+        except Exception as e:
+            logger.error(f"Redis async delete error: {e}")
+        return False
+    
     def clear(self) -> None:
         """清空所有缓存"""
         if not self._connected:
@@ -340,6 +366,20 @@ class RedisCache:
             self._misses = 0
         except Exception as e:
             logger.error(f"Redis clear error: {e}")
+    
+    async def aclear(self) -> None:
+        """异步清空所有缓存"""
+        if not self._connected:
+            return
+        
+        try:
+            redis = self._get_redis()
+            if redis:
+                await redis.flushdb()
+                self._hits = 0
+                self._misses = 0
+        except Exception as e:
+            logger.error(f"Redis async clear error: {e}")
     
     def get_stats(self) -> Dict[str, Any]:
         """获取缓存统计信息"""
@@ -444,6 +484,21 @@ class CacheManager:
         
         self._memory_cache.set(key, value, ttl)
     
+    async def aset(self, key: str, value: Any, ttl: int = 300) -> None:
+        """异步设置缓存值"""
+        if self._current_backend == CacheBackend.REDIS and self._redis_cache:
+            try:
+                await self._redis_cache.aset(key, value, ttl)
+                return
+            except Exception as e:
+                logger.error(f"Redis async set failed, falling back to memory: {e}")
+                if self._fallback_to_memory:
+                    pass
+                else:
+                    raise
+        
+        self._memory_cache.set(key, value, ttl)
+    
     def delete(self, key: str) -> bool:
         """删除缓存"""
         deleted = False
@@ -460,6 +515,22 @@ class CacheManager:
         
         return deleted
     
+    async def adelete(self, key: str) -> bool:
+        """异步删除缓存"""
+        deleted = False
+        
+        if self._current_backend == CacheBackend.REDIS and self._redis_cache:
+            try:
+                deleted = await self._redis_cache.adelete(key)
+            except Exception as e:
+                logger.error(f"Redis async delete failed: {e}")
+        
+        # 同时删除内存缓存
+        if self._memory_cache.delete(key):
+            deleted = True
+        
+        return deleted
+    
     def clear(self) -> None:
         """清空所有缓存"""
         if self._current_backend == CacheBackend.REDIS and self._redis_cache:
@@ -467,6 +538,16 @@ class CacheManager:
                 self._redis_cache.clear()
             except Exception as e:
                 logger.error(f"Redis clear failed: {e}")
+        
+        self._memory_cache.clear()
+    
+    async def aclear(self) -> None:
+        """异步清空所有缓存"""
+        if self._current_backend == CacheBackend.REDIS and self._redis_cache:
+            try:
+                await self._redis_cache.aclear()
+            except Exception as e:
+                logger.error(f"Redis async clear failed: {e}")
         
         self._memory_cache.clear()
     
@@ -566,16 +647,34 @@ def set(key: str, value: Any, ttl: int = 300) -> None:
     cache.set(key, value, ttl)
 
 
+async def aset(key: str, value: Any, ttl: int = 300) -> None:
+    """异步设置缓存值"""
+    cache = get_cache()
+    await cache.aset(key, value, ttl)
+
+
 def delete(key: str) -> bool:
     """删除缓存"""
     cache = get_cache()
     return cache.delete(key)
 
 
+async def adelete(key: str) -> bool:
+    """异步删除缓存"""
+    cache = get_cache()
+    return await cache.adelete(key)
+
+
 def clear() -> None:
     """清空缓存"""
     cache = get_cache()
     cache.clear()
+
+
+async def aclear() -> None:
+    """异步清空缓存"""
+    cache = get_cache()
+    await cache.aclear()
 
 
 def get_stats() -> Dict[str, Any]:
@@ -629,12 +728,24 @@ class Cache:
         return get(key, default)
     
     @staticmethod
+    async def aset(key: str, value: Any, ttl: int = 300) -> None:
+        return await aset(key, value, ttl)
+    
+    @staticmethod
     def set(key: str, value: Any, ttl: int = 300) -> None:
         set(key, value, ttl)
     
     @staticmethod
+    async def adelete(key: str) -> bool:
+        return await adelete(key)
+    
+    @staticmethod
     def delete(key: str) -> bool:
         return delete(key)
+    
+    @staticmethod
+    async def aclear() -> None:
+        return await aclear()
     
     @staticmethod
     def clear() -> None:

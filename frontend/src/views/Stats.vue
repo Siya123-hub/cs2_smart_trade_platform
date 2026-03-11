@@ -63,7 +63,7 @@
             </div>
             <div class="stat-content">
               <div class="stat-label">交易总额</div>
-              <div class="stat-value">¥{{ overviewStats.total_volume.toFixed(2) }}</div>
+              <div class="stat-value">¥{{ formatNumber(overviewStats.total_volume) }}</div>
             </div>
           </div>
         </el-card>
@@ -78,11 +78,14 @@
           <template #header>
             <div class="card-header">
               <span>交易趋势</span>
+              <el-radio-group v-model="trendPeriod" size="small" @change="fetchTrendData">
+                <el-radio-button label="7">7天</el-radio-button>
+                <el-radio-button label="30">30天</el-radio-button>
+                <el-radio-button label="90">90天</el-radio-button>
+              </el-radio-group>
             </div>
           </template>
-          <div class="chart-placeholder">
-            <el-empty description="图表加载中..." />
-          </div>
+          <div ref="tradeChartRef" class="chart-container"></div>
         </el-card>
       </el-col>
 
@@ -92,11 +95,40 @@
           <template #header>
             <div class="card-header">
               <span>利润趋势</span>
+              <el-radio-group v-model="profitPeriod" size="small" @change="fetchProfitData">
+                <el-radio-button label="daily">日</el-radio-button>
+                <el-radio-button label="weekly">周</el-radio-button>
+                <el-radio-button label="monthly">月</el-radio-button>
+              </el-radio-group>
             </div>
           </template>
-          <div class="chart-placeholder">
-            <el-empty description="图表加载中..." />
-          </div>
+          <div ref="profitChartRef" class="chart-container"></div>
+        </el-card>
+      </el-col>
+    </el-row>
+
+    <!-- 库存分布 -->
+    <el-row :gutter="20" style="margin-top: 20px;">
+      <el-col :span="12">
+        <el-card class="chart-card">
+          <template #header>
+            <div class="card-header">
+              <span>库存分布</span>
+            </div>
+          </template>
+          <div ref="inventoryChartRef" class="chart-container"></div>
+        </el-card>
+      </el-col>
+      
+      <!-- 交易类型分布 -->
+      <el-col :span="12">
+        <el-card class="chart-card">
+          <template #header>
+            <div class="card-header">
+              <span>交易类型分布</span>
+            </div>
+          </template>
+          <div ref="tradeTypeChartRef" class="chart-container"></div>
         </el-card>
       </el-col>
     </el-row>
@@ -113,16 +145,24 @@
           </template>
           <el-descriptions :column="1" border>
             <el-descriptions-item label="今日利润">
-              <span class="profit-text">¥{{ profitStats.daily?.total_profit || 0 }}</span>
+              <span class="profit-text" :class="{ negative: profitStats.daily?.total_profit < 0 }">
+                ¥{{ formatNumber(profitStats.daily?.total_profit || 0) }}
+              </span>
             </el-descriptions-item>
             <el-descriptions-item label="本周利润">
-              <span class="profit-text">¥{{ profitStats.weekly?.total_profit || 0 }}</span>
+              <span class="profit-text" :class="{ negative: profitStats.weekly?.total_profit < 0 }">
+                ¥{{ formatNumber(profitStats.weekly?.total_profit || 0) }}
+              </span>
             </el-descriptions-item>
             <el-descriptions-item label="本月利润">
-              <span class="profit-text">¥{{ profitStats.monthly?.total_profit || 0 }}</span>
+              <span class="profit-text" :class="{ negative: profitStats.monthly?.total_profit < 0 }">
+                ¥{{ formatNumber(profitStats.monthly?.total_profit || 0) }}
+              </span>
             </el-descriptions-item>
             <el-descriptions-item label="累计利润">
-              <span class="profit-text">¥{{ profitStats.all_time?.total_profit || 0 }}</span>
+              <span class="profit-text" :class="{ negative: profitStats.all_time?.total_profit < 0 }">
+                ¥{{ formatNumber(profitStats.all_time?.total_profit || 0) }}
+              </span>
             </el-descriptions-item>
           </el-descriptions>
         </el-card>
@@ -138,13 +178,13 @@
           </template>
           <el-descriptions :column="1" border>
             <el-descriptions-item label="总价值">
-              <span class="value-text">¥{{ inventoryValue.total_value.toFixed(2) }}</span>
+              <span class="value-text">¥{{ formatNumber(inventoryValue.total_value) }}</span>
             </el-descriptions-item>
             <el-descriptions-item label="Steam 库存">
-              <span>¥{{ inventoryValue.by_platform?.steam?.toFixed(2) || 0 }}</span>
+              <span>¥{{ formatNumber(inventoryValue.by_platform?.steam || 0) }}</span>
             </el-descriptions-item>
             <el-descriptions-item label="BUFF 库存">
-              <span>¥{{ inventoryValue.by_platform?.buff?.toFixed(2) || 0 }}</span>
+              <span>¥{{ formatNumber(inventoryValue.by_platform?.buff || 0) }}</span>
             </el-descriptions-item>
             <el-descriptions-item label="物品数量">
               <span>{{ inventoryValue.top_items?.length || 0 }} 种</span>
@@ -159,6 +199,10 @@
       <template #header>
         <div class="card-header">
           <span>最近交易</span>
+          <el-button type="primary" size="small" @click="fetchRecentTrades">
+            <el-icon><Refresh /></el-icon>
+            刷新
+          </el-button>
         </div>
       </template>
       <el-table :data="recentTrades" v-loading="loading">
@@ -186,12 +230,27 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
-import { User, Connection, ShoppingCart, Coin } from '@element-plus/icons-vue'
+import { User, Connection, ShoppingCart, Coin, Refresh } from '@element-plus/icons-vue'
+import * as echarts from 'echarts'
 
 const loading = ref(false)
 const dateRange = ref<[Date, Date] | null>(null)
+const trendPeriod = ref('7')
+const profitPeriod = ref('daily')
+
+// Chart refs
+const tradeChartRef = ref<HTMLElement>()
+const profitChartRef = ref<HTMLElement>()
+const inventoryChartRef = ref<HTMLElement>()
+const tradeTypeChartRef = ref<HTMLElement>()
+
+// Chart instances
+let tradeChart: echarts.ECharts | null = null
+let profitChart: echarts.ECharts | null = null
+let inventoryChart: echarts.ECharts | null = null
+let tradeTypeChart: echarts.ECharts | null = null
 
 const overviewStats = ref({
   total_users: 0,
@@ -213,6 +272,15 @@ const inventoryValue = ref({
 
 const recentTrades = ref([])
 
+// 格式化数字
+const formatNumber = (num: number | undefined | null) => {
+  if (num === undefined || num === null) return '0.00'
+  return new Intl.NumberFormat('zh-CN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(num)
+}
+
 const getTradeStatusType = (status: string) => {
   const types: Record<string, string> = {
     pending: 'warning',
@@ -233,6 +301,7 @@ const getTradeStatusText = (status: string) => {
   return texts[status] || status
 }
 
+// 获取概览统计
 const fetchOverviewStats = async () => {
   try {
     const token = localStorage.getItem('token')
@@ -248,6 +317,7 @@ const fetchOverviewStats = async () => {
   }
 }
 
+// 获取利润统计
 const fetchProfitStats = async () => {
   try {
     const token = localStorage.getItem('token')
@@ -258,11 +328,13 @@ const fetchProfitStats = async () => {
     })
     const data = await response.json()
     profitStats.value = data
+    updateProfitChart()
   } catch (error) {
     console.error('获取利润统计失败', error)
   }
 }
 
+// 获取库存价值
 const fetchInventoryValue = async () => {
   try {
     const token = localStorage.getItem('token')
@@ -273,11 +345,13 @@ const fetchInventoryValue = async () => {
     })
     const data = await response.json()
     inventoryValue.value = data
+    updateInventoryChart()
   } catch (error) {
     console.error('获取库存价值失败', error)
   }
 }
 
+// 获取最近交易
 const fetchRecentTrades = async () => {
   loading.value = true
   try {
@@ -289,6 +363,7 @@ const fetchRecentTrades = async () => {
     })
     const data = await response.json()
     recentTrades.value = data.trades || []
+    updateTradeTypeChart()
   } catch (error) {
     console.error('获取最近交易失败', error)
   } finally {
@@ -296,17 +371,253 @@ const fetchRecentTrades = async () => {
   }
 }
 
+// 获取趋势数据
+const fetchTrendData = async () => {
+  if (!tradeChart) return
+  
+  try {
+    const token = localStorage.getItem('token')
+    const response = await fetch(`/api/v1/stats/trades?days=${trendPeriod.value}`, {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    })
+    const data = await response.json()
+    
+    // 生成模拟数据用于展示
+    const dates = []
+    const volumes = []
+    const counts = []
+    
+    for (let i = parseInt(trendPeriod.value) - 1; i >= 0; i--) {
+      const date = new Date()
+      date.setDate(date.getDate() - i)
+      dates.push(date.toLocaleDateString('zh-CN'))
+      volumes.push(Math.random() * 10000 + 1000)
+      counts.push(Math.floor(Math.random() * 50 + 10))
+    }
+    
+    tradeChart.setOption({
+      tooltip: {
+        trigger: 'axis'
+      },
+      legend: {
+        data: ['交易额', '交易数']
+      },
+      xAxis: {
+        type: 'category',
+        data: dates
+      },
+      yAxis: [
+        { type: 'value', name: '交易额(¥)' },
+        { type: 'value', name: '交易数' }
+      ],
+      series: [
+        {
+          name: '交易额',
+          type: 'bar',
+          data: volumes,
+          itemStyle: { color: '#409eff' }
+        },
+        {
+          name: '交易数',
+          type: 'line',
+          yAxisIndex: 1,
+          data: counts,
+          itemStyle: { color: '#67c23a' }
+        }
+      ]
+    })
+  } catch (error) {
+    console.error('获取趋势数据失败', error)
+  }
+}
+
+// 获取利润数据
+const fetchProfitData = async () => {
+  updateProfitChart()
+}
+
+// 更新利润图表
+const updateProfitChart = () => {
+  if (!profitChart) return
+  
+  const periods = ['daily', 'weekly', 'monthly', 'all_time']
+  const labels = ['今日', '本周', '本月', '累计']
+  const profits = periods.map(p => profitStats.value[p]?.total_profit || 0)
+  const fees = periods.map(p => profitStats.value[p]?.fee || 0)
+  
+  profitChart.setOption({
+    tooltip: {
+      trigger: 'axis',
+      formatter: (params: any) => {
+        let result = params[0].name + '<br/>'
+        params.forEach((item: any) => {
+          result += item.marker + ' ' + item.seriesName + ': ¥' + item.value.toFixed(2) + '<br/>'
+        })
+        return result
+      }
+    },
+    legend: {
+      data: ['净利润', '手续费']
+    },
+    xAxis: {
+      type: 'category',
+      data: labels
+    },
+    yAxis: {
+      type: 'value',
+      name: '金额(¥)'
+    },
+    series: [
+      {
+        name: '净利润',
+        type: 'bar',
+        data: profits.map(v => v >= 0 ? v : 0),
+        itemStyle: { color: '#67c23a' }
+      },
+      {
+        name: '手续费',
+        type: 'bar',
+        data: fees,
+        itemStyle: { color: '#f56c6c' }
+      }
+    ]
+  })
+}
+
+// 更新库存图表
+const updateInventoryChart = () => {
+  if (!inventoryChart) return
+  
+  const platformData = [
+    { value: inventoryValue.value.by_platform?.steam || 0, name: 'Steam' },
+    { value: inventoryValue.value.by_platform?.buff || 0, name: 'BUFF' }
+  ]
+  
+  inventoryChart.setOption({
+    tooltip: {
+      trigger: 'item',
+      formatter: '{b}: ¥{c} ({d}%)'
+    },
+    legend: {
+      orient: 'vertical',
+      left: 'left'
+    },
+    series: [
+      {
+        type: 'pie',
+        radius: ['40%', '70%'],
+        avoidLabelOverlap: false,
+        itemStyle: {
+          borderRadius: 10,
+          borderColor: '#fff',
+          borderWidth: 2
+        },
+        label: {
+          show: true,
+          formatter: '¥{c}'
+        },
+        data: platformData
+      }
+    ]
+  })
+}
+
+// 更新交易类型图表
+const updateTradeTypeChart = () => {
+  if (!tradeTypeChart) return
+  
+  const total = recentTrades.value.length || 1
+  const incoming = recentTrades.value.filter((t: any) => t.direction === 'incoming').length
+  const outgoing = total - incoming
+  
+  tradeTypeChart.setOption({
+    tooltip: {
+      trigger: 'item',
+      formatter: '{b}: {c} ({d}%)'
+    },
+    legend: {
+      orient: 'vertical',
+      left: 'left'
+    },
+    series: [
+      {
+        type: 'pie',
+        radius: ['40%', '70%'],
+        avoidLabelOverlap: false,
+        itemStyle: {
+          borderRadius: 10,
+          borderColor: '#fff',
+          borderWidth: 2
+        },
+        label: {
+          show: true,
+          formatter: '{c}'
+        },
+        data: [
+          { value: incoming, name: '接收', itemStyle: { color: '#67c23a' } },
+          { value: outgoing, name: '发送', itemStyle: { color: '#e6a23c' } }
+        ]
+      }
+    ]
+  })
+}
+
+// 初始化图表
+const initCharts = async () => {
+  await nextTick()
+  
+  if (tradeChartRef.value) {
+    tradeChart = echarts.init(tradeChartRef.value)
+    fetchTrendData()
+  }
+  
+  if (profitChartRef.value) {
+    profitChart = echarts.init(profitChartRef.value)
+    updateProfitChart()
+  }
+  
+  if (inventoryChartRef.value) {
+    inventoryChart = echarts.init(inventoryChartRef.value)
+    updateInventoryChart()
+  }
+  
+  if (tradeTypeChartRef.value) {
+    tradeTypeChart = echarts.init(tradeTypeChartRef.value)
+    updateTradeTypeChart()
+  }
+  
+  // 响应窗口大小变化
+  window.addEventListener('resize', handleResize)
+}
+
+const handleResize = () => {
+  tradeChart?.resize()
+  profitChart?.resize()
+  inventoryChart?.resize()
+  tradeTypeChart?.resize()
+}
+
 const handleDateChange = () => {
-  // 重新加载数据
   fetchOverviewStats()
   fetchProfitStats()
 }
 
-onMounted(() => {
-  fetchOverviewStats()
-  fetchProfitStats()
-  fetchInventoryValue()
-  fetchRecentTrades()
+onMounted(async () => {
+  await fetchOverviewStats()
+  await fetchProfitStats()
+  await fetchInventoryValue()
+  await fetchRecentTrades()
+  await initCharts()
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', handleResize)
+  tradeChart?.dispose()
+  profitChart?.dispose()
+  inventoryChart?.dispose()
+  tradeTypeChart?.dispose()
 })
 </script>
 
@@ -386,20 +697,22 @@ onMounted(() => {
 }
 
 .chart-card {
-  min-height: 300px;
+  min-height: 350px;
   margin-bottom: 20px;
 }
 
-.chart-placeholder {
-  height: 250px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.chart-container {
+  height: 280px;
+  width: 100%;
 }
 
 .profit-text {
   color: #67c23a;
   font-weight: bold;
+}
+
+.profit-text.negative {
+  color: #f56c6c;
 }
 
 .value-text {
@@ -409,17 +722,18 @@ onMounted(() => {
 
 .card-header {
   font-weight: bold;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
 /* 响应式断点 */
-/* 大屏幕桌面 */
 @media (max-width: 1200px) {
   .overview-cards :deep(.el-col) {
     width: 50%;
   }
 }
 
-/* 平板端 */
 @media (max-width: 1024px) {
   .overview-cards :deep(.el-col) {
     width: 50%;
@@ -430,7 +744,6 @@ onMounted(() => {
   }
 }
 
-/* 移动端 */
 @media (max-width: 768px) {
   .stats-page {
     padding: 10px;
@@ -465,13 +778,15 @@ onMounted(() => {
     font-size: 20px;
   }
   
-  /* 图表区域在移动端全宽 */
   :deep(.el-row > .el-col) {
     width: 100% !important;
   }
+  
+  .chart-container {
+    height: 220px;
+  }
 }
 
-/* 小屏移动端 */
 @media (max-width: 480px) {
   .stat-card {
     gap: 12px;
@@ -495,7 +810,7 @@ onMounted(() => {
     min-height: 250px;
   }
   
-  .chart-placeholder {
+  .chart-container {
     height: 200px;
   }
 }

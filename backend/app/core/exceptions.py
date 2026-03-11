@@ -9,6 +9,8 @@ from fastapi import Request
 import logging
 import traceback
 
+from app.core.config import settings
+
 logger = logging.getLogger(__name__)
 
 
