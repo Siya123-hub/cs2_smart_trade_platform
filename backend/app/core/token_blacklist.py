@@ -3,28 +3,23 @@
 Token 黑名单管理
 使用 Redis 存储 token 黑名单
 """
-from typing import Optional
-import redis.asyncio as redis
-from datetime import datetime, timedelta
+import logging
+from datetime import datetime
 
-from app.core.config import settings
+from app.core.redis_manager import redis_manager
+
+logger = logging.getLogger(__name__)
 
 
 class TokenBlacklist:
     """Token 黑名单管理器"""
     
     def __init__(self):
-        self.redis_client: Optional[redis.Redis] = None
+        pass
     
-    async def get_client(self) -> redis.Redis:
+    async def get_client(self):
         """获取 Redis 客户端"""
-        if self.redis_client is None:
-            self.redis_client = await redis.from_url(
-                settings.REDIS_URL,
-                encoding="utf-8",
-                decode_responses=True
-            )
-        return self.redis_client
+        return await redis_manager.get_client()
     
     async def add(self, token: str, expires_in: int = 86400) -> bool:
         """
@@ -62,7 +57,7 @@ class TokenBlacklist:
             return True
             
         except Exception as e:
-            print(f"Error adding token to blacklist: {e}")
+            logger.error(f"Error adding token to blacklist: {e}")
             return False
     
     async def is_blacklisted(self, token: str) -> bool:
@@ -98,11 +93,6 @@ class TokenBlacklist:
             return True
         except Exception:
             return False
-    
-    async def close(self):
-        """关闭 Redis 连接"""
-        if self.redis_client:
-            await self.redis_client.close()
 
 
 # 全局黑名单实例
