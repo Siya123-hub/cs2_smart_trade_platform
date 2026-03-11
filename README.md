@@ -135,6 +135,8 @@ docker-compose up -d
 | `SECRET_KEY` | JWT 密钥 | 自动生成 |
 | `STEAM_API_KEY` | Steam Web API Key | - |
 | `BUFF_COOKIE` | BUFF 登录 Cookie | - |
+| `ENCRYPTION_KEY` | 加密密钥（**必需**） | - |
+| `ENCRYPTION_SALT` | 加密盐值，至少16字符（**必需**） | - |
 
 ### 环境变量 (Frontend)
 
