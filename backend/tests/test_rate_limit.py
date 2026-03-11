@@ -106,7 +106,8 @@ class TestRateLimitMiddleware:
         
         assert config == middleware.default_config
     
-    def test_check_rate_limit_first_request(self):
+    @pytest.mark.asyncio
+    async def test_check_rate_limit_first_request(self):
         """测试首次请求通过"""
         app = MagicMock()
         middleware = RateLimitMiddleware(app)
@@ -114,12 +115,13 @@ class TestRateLimitMiddleware:
         key = "test_key"
         config = {"requests": 60, "window": 60, "burst": 10}
         
-        allowed, info = middleware._check_rate_limit(key, config)
+        allowed, info = await middleware._check_rate_limit(key, config)
         
         assert allowed is True
         assert info is None
     
-    def test_check_rate_limit_exceeded(self):
+    @pytest.mark.asyncio
+    async def test_check_rate_limit_exceeded(self):
         """测试超过限流"""
         app = MagicMock()
         middleware = RateLimitMiddleware(app)
@@ -130,14 +132,15 @@ class TestRateLimitMiddleware:
         # 模拟已有5个请求
         middleware._requests[key] = [time.time() - 10] * 5
         
-        allowed, info = middleware._check_rate_limit(key, config)
+        allowed, info = await middleware._check_rate_limit(key, config)
         
         assert allowed is False
         assert info is not None
         assert info["requests"] == 5
         assert info["limit"] == 5
     
-    def test_check_rate_limit_window_expired(self):
+    @pytest.mark.asyncio
+    async def test_check_rate_limit_window_expired(self):
         """测试窗口过期后重置"""
         app = MagicMock()
         middleware = RateLimitMiddleware(app)
@@ -148,12 +151,13 @@ class TestRateLimitMiddleware:
         # 模拟旧请求（超过窗口时间）
         middleware._requests[key] = [time.time() - 120] * 5
         
-        allowed, info = middleware._check_rate_limit(key, config)
+        allowed, info = await middleware._check_rate_limit(key, config)
         
         # 旧请求已清理，可以通过
         assert allowed is True
     
-    def test_check_rate_limit_burst_warning(self):
+    @pytest.mark.asyncio
+    async def test_check_rate_limit_burst_warning(self):
         """测试突发限制警告"""
         app = MagicMock()
         middleware = RateLimitMiddleware(app)
@@ -164,7 +168,7 @@ class TestRateLimitMiddleware:
         # 模拟请求数达到突发限制
         middleware._requests[key] = [time.time() - 5] * 5
         
-        allowed, info = middleware._check_rate_limit(key, config)
+        allowed, info = await middleware._check_rate_limit(key, config)
         
         # 应该通过但有警告
         assert allowed is True
@@ -244,7 +248,8 @@ class TestRateLimitEdgeCases:
         ip = middleware._get_client_ip(request)
         assert ip == "unknown"
     
-    def test_concurrent_requests_same_key(self):
+    @pytest.mark.asyncio
+    async def test_concurrent_requests_same_key(self):
         """测试同一key的并发请求"""
         app = MagicMock()
         middleware = RateLimitMiddleware(app)
@@ -254,7 +259,7 @@ class TestRateLimitEdgeCases:
         
         results = []
         for _ in range(3):
-            allowed, _ = middleware._check_rate_limit(key, config)
+            allowed, _ = await middleware._check_rate_limit(key, config)
             results.append(allowed)
         
         # 前3个应该通过
@@ -280,7 +285,8 @@ class TestRateLimitEdgeCases:
         assert allowed1 is True
         assert allowed2 is True
     
-    def test_cleanup_expired_records(self):
+    @pytest.mark.asyncio
+    async def test_cleanup_expired_records(self):
         """测试清理过期记录"""
         app = MagicMock()
         middleware = RateLimitMiddleware(app)
@@ -293,7 +299,7 @@ class TestRateLimitEdgeCases:
         middleware._requests[key] = [old_time, new_time, old_time]
         
         config = {"requests": 5, "window": 60, "burst": 3}
-        allowed, _ = middleware._check_rate_limit(key, config)
+        allowed, _ = await middleware._check_rate_limit(key, config)
         
         # 旧请求应该被清理
         assert allowed is True
