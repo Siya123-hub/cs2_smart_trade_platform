@@ -3,11 +3,12 @@
 API 幂等性保护模块
 防止重复请求导致的重复操作
 """
+import asyncio
 import hashlib
 import json
 import logging
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Tuple
 
 from app.core.redis_manager import get_redis
 
@@ -70,9 +71,9 @@ def generate_idempotency_key(
     return f"{IDEMPOTENCY_PREFIX}{key_hash}"
 
 
-async def check_idempotency(key: str) -> tuple[bool, Optional[dict]]:
+async def check_idempotency(key: str) -> Tuple[bool, Optional[dict]]:
     """
-    检查请求是否已处理
+    检查请求是否已处理（原子操作）
     
     参数:
         key: 幂等性 key
@@ -80,18 +81,39 @@ async def check_idempotency(key: str) -> tuple[bool, Optional[dict]]:
     返回:
         (是否已处理, 已保存的响应)
     """
+    import json
     redis_client = await get_redis()
     
-    # 检查 key 是否存在
-    exists = await redis_client.exists(key)
-    if exists:
-        # 获取已保存的响应
+    # 使用 SETNX + GET 实现原子检查
+    # 先尝试设置锁（如果不存在）
+    lock_key = f"{key}:lock"
+    acquired = await redis_client.set(
+        lock_key, 
+        "1", 
+        nx=True,  # 仅当不存在时设置
+        ex=30     # 锁过期时间 30 秒
+    )
+    
+    if acquired:
+        # 获取锁成功，检查是否已有缓存的响应
         cached_response = await redis_client.get(key)
         if cached_response:
-            import json
+            # 存在已缓存的响应，删除锁并返回
+            await redis_client.delete(lock_key)
             return True, json.loads(cached_response)
-    
-    return False, None
+        # 没有缓存响应，返回 False 表示可以继续处理
+        return False, None
+    else:
+        # 获取锁失败，说明有并发请求正在处理
+        # 等待一段时间后检查是否有缓存的响应
+        for _ in range(10):  # 最多等待 5 秒
+            await asyncio.sleep(0.5)
+            cached_response = await redis_client.get(key)
+            if cached_response:
+                return True, json.loads(cached_response)
+        
+        # 等待超时，返回 False
+        return False, None
 
 
 async def save_idempotent_response(key: str, response_data: dict, ttl: int = DEFAULT_TTL_SECONDS):
