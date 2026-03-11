@@ -61,9 +61,9 @@ class TestAuditLogger:
     
     def test_get_user_info_with_state(self):
         """测试从state获取用户信息"""
-Logger()
+        logger = AuditLogger()
         request = MockRequest()
-        logger = Audit        request.state.user_id = 123
+        request.state.user_id = 123
         request.state.username = "testuser"
         
         user_info = logger._get_user_info(request)
