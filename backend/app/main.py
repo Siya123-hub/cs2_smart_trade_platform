@@ -13,7 +13,7 @@ from app.core.database import engine, Base
 from app.core.encryption import encryption_manager
 from app.core.logging_config import init_logging
 from app.core.exceptions import register_error_handlers
-from app.api.v1.router import api_router
+from app.api.router import create_api_router
 from app.api.v1.endpoints.monitoring import metrics_middleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
@@ -96,7 +96,8 @@ def create_app() -> FastAPI:
         app.add_middleware(RateLimitMiddleware, config=rate_limit_config)
 
     # 注册路由
-    app.include_router(api_router, prefix="/api/v1")
+    api_router = create_api_router()
+    app.include_router(api_router)
 
     # 添加指标收集中间件
     app.middleware("http")(metrics_middleware)
@@ -113,7 +114,74 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     async def health_check():
-        return {"status": "healthy"}
+        """健康检查端点"""
+        import platform
+        import sys
+        
+        # 获取依赖版本
+        try:
+            import sqlalchemy
+            import redis
+            import aiohttp
+            db_version = sqlalchemy.__version__
+            redis_version = redis.__version__
+            aiohttp_version = aiohttp.__version__
+        except ImportError:
+            db_version = redis_version = aiohttp_version = "unknown"
+        
+        return {
+            "status": "healthy",
+            "system": {
+                "platform": platform.platform(),
+                "python_version": sys.version,
+            },
+            "dependencies": {
+                "sqlalchemy": db_version,
+                "redis": redis_version,
+                "aiohttp": aiohttp_version,
+            }
+        }
+
+    @app.get("/health/ready")
+    async def readiness_check():
+        """就绪检查 - 检查所有依赖服务"""
+        checks = {}
+        
+        # 检查数据库
+        try:
+            from app.core.database import engine
+            async with engine.connect() as conn:
+                await conn.execute("SELECT 1")
+            checks["database"] = "healthy"
+        except Exception as e:
+            checks["database"] = f"unhealthy: {str(e)}"
+        
+        # 检查 Redis
+        try:
+            from app.core.redis_manager import get_redis
+            redis_client = await get_redis()
+            await redis_client.ping()
+            checks["redis"] = "healthy"
+        except Exception as e:
+            checks["redis"] = f"unhealthy: {str(e)}"
+        
+        # 检查 Steam API
+        try:
+            steam_api = get_steam_api()
+            if await steam_api.health_check():
+                checks["steam_api"] = "healthy"
+            else:
+                checks["steam_api"] = "degraded"
+        except Exception as e:
+            checks["steam_api"] = f"unhealthy: {str(e)}"
+        
+        # 判断整体状态
+        all_healthy = all(v == "healthy" for v in checks.values())
+        
+        return {
+            "status": "ready" if all_healthy else "not_ready",
+            "checks": checks
+        }
 
     return app
 

@@ -3,7 +3,11 @@
 Steam API 服务
 """
 import asyncio
+import hashlib
+import hmac
 import logging
+import json
+import time
 from typing import Optional, Dict, List, Any, Set
 from contextlib import asynccontextmanager
 
@@ -13,6 +17,9 @@ from app.core.config import settings
 from app.core.circuit_breaker import circuit_breaker, CircuitBreakerOpen, CircuitBreaker
 
 logger = logging.getLogger(__name__)
+
+# Steam Market API 配置
+STEAM_MARKET_API_DELAY = 0.5  # 请求间隔（秒），避免触发反爬虫
 
 
 class SteamAPIError(Exception):
@@ -308,6 +315,302 @@ class SteamTrade:
         
         # 实际实现需要调用 Steam API
         return True
+
+    # ========== Steam 市场挂单功能 ==========
+    
+    async def _get_market_session(self) -> aiohttp.ClientSession:
+        """获取用于市场操作的 Session（需要 Cookie 认证）"""
+        # 创建带有 Cookie 的 session
+        if not hasattr(self, '_market_session') or self._market_session.closed:
+            self._market_session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=30, connect=10)
+            )
+        return self._market_session
+    
+    async def _build_market_headers(self) -> Dict[str, str]:
+        """构建市场API请求头"""
+        return {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/javascript, */*; charset=utf-8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://steamcommunity.com/market/",
+            "Origin": "https://steamcommunity.com",
+        }
+    
+    @circuit_breaker(name="steam_market_listings", failure_threshold=3, recovery_timeout=60)
+    async def get_my_listings(
+        self,
+        app_id: int = 730,
+        start: int = 0,
+        count: int = 100
+    ) -> Dict[str, Any]:
+        """
+        获取我的市场挂单列表
+        
+        Args:
+            app_id: Steam App ID (730 = CS2)
+            start: 起始位置
+            count: 获取数量
+            
+        Returns:
+            挂单列表数据
+        """
+        if not self.session_token:
+            raise Exception("需要 session_token 才能访问市场")
+        
+        await asyncio.sleep(STEAM_MARKET_API_DELAY)  # 避免触发反爬虫
+        
+        session = await self._get_market_session()
+        
+        # 构建请求
+        url = f"{self.market_url}/mylistings/"
+        params = {
+            "start": start,
+            "count": count,
+            "l": "schinese",
+            "cc": "CN"
+        }
+        
+        # 添加 Cookie
+        cookies = {
+            "sessionid": self._generate_session_id(),
+            "steamLoginSecure": self.session_token,
+            "steamCurrencyId": "3"  # 人民币
+        }
+        
+        headers = await self._build_market_headers()
+        
+        try:
+            async with session.get(
+                url,
+                params=params,
+                cookies=cookies,
+                headers=headers
+            ) as response:
+                if response.status != 200:
+                    logger.error(f"获取挂单列表失败: {response.status}")
+                    return {"success": False, "error": f"HTTP {response.status}"}
+                
+                data = await response.json()
+                return {
+                    "success": True,
+                    "listings": data.get("listings", []),
+                    "total_count": data.get("total_count", 0),
+                    "start": start,
+                    "count": count
+                }
+        except Exception as e:
+            logger.error(f"获取挂单列表异常: {e}")
+            return {"success": False, "error": str(e)}
+    
+    @circuit_breaker(name="steam_market_create", failure_threshold=3, recovery_timeout=60)
+    async def create_listing(
+        self,
+        asset_id: str,
+        price: float,
+        app_id: int = 730,
+        quantity: int = 1
+    ) -> Dict[str, Any]:
+        """
+        创建市场挂单
+        
+        Args:
+            asset_id: Steam 资产 ID
+            app_id: Steam App ID (730 = CS2)
+            price: 单价（分）
+            quantity: 数量
+            
+        Returns:
+            创建结果
+        """
+        if not self.session_token:
+            raise Exception("需要 session_token 才能创建挂单")
+        
+        await asyncio.sleep(STEAM_MARKET_API_DELAY)
+        
+        session = await self._get_market_session()
+        
+        # 构建请求
+        url = f"{self.market_url}/sellitem/"
+        
+        # 构造 form 数据
+        data = {
+            "sessionid": self._generate_session_id(),
+            "appid": app_id,
+            "assetid": asset_id,
+            "contextid": 2,  # CS2 库存 context
+            "amount": quantity,
+            "price": int(price * 100)  # 转换为分
+        }
+        
+        cookies = {
+            "sessionid": self._generate_session_id(),
+            "steamLoginSecure": self.session_token,
+            "steamCurrencyId": "3"
+        }
+        
+        headers = await self._build_market_headers()
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
+        
+        try:
+            async with session.post(
+                url,
+                data=data,
+                cookies=cookies,
+                headers=headers
+            ) as response:
+                result = await response.json()
+                
+                if result.get("success", False):
+                    return {
+                        "success": True,
+                        "listing_id": result.get("listingid", ""),
+                        "price": price,
+                        "asset_id": asset_id
+                    }
+                else:
+                    error_msg = result.get("message", "未知错误")
+                    logger.error(f"创建挂单失败: {error_msg}")
+                    return {
+                        "success": False,
+                        "error": error_msg
+                    }
+        except Exception as e:
+            logger.error(f"创建挂单异常: {e}")
+            return {"success": False, "error": str(e)}
+    
+    @circuit_breaker(name="steam_market_cancel", failure_threshold=3, recovery_timeout=60)
+    async def cancel_listing(
+        self,
+        listing_id: str,
+        app_id: int = 730
+    ) -> Dict[str, Any]:
+        """
+        取消市场挂单
+        
+        Args:
+            listing_id: 挂单 ID
+            app_id: Steam App ID
+            
+        Returns:
+            取消结果
+        """
+        if not self.session_token:
+            raise Exception("需要 session_token 才能取消挂单")
+        
+        await asyncio.sleep(STEAM_MARKET_API_DELAY)
+        
+        session = await self._get_market_session()
+        
+        # 构建请求
+        url = f"{self.market_url}/removelisting/"
+        
+        data = {
+            "sessionid": self._generate_session_id(),
+            "listingid": listing_id
+        }
+        
+        cookies = {
+            "sessionid": self._generate_session_id(),
+            "steamLoginSecure": self.session_token,
+        }
+        
+        headers = await self._build_market_headers()
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
+        
+        try:
+            async with session.post(
+                url,
+                data=data,
+                cookies=cookies,
+                headers=headers
+            ) as response:
+                result = await response.json()
+                
+                if result.get("success", False):
+                    return {
+                        "success": True,
+                        "listing_id": listing_id
+                    }
+                else:
+                    error_msg = result.get("message", "未知错误")
+                    logger.error(f"取消挂单失败: {error_msg}")
+                    return {
+                        "success": False,
+                        "error": error_msg
+                    }
+        except Exception as e:
+            logger.error(f"取消挂单异常: {e}")
+            return {"success": False, "error": str(e)}
+    
+    def _generate_session_id(self) -> str:
+        """生成 Session ID（用于市场操作）"""
+        if not hasattr(self, '_cached_session_id'):
+            # 使用 steam_id + 时间戳生成 session id
+            import uuid
+            self._cached_session_id = hashlib.md5(
+                f"{self.steam_id}{uuid.uuid4()}".encode()
+            ).hexdigest()
+        return self._cached_session_id
+    
+    async def get_sell_history(
+        self,
+        app_id: int = 730,
+        start: int = 0,
+        count: int = 50
+    ) -> Dict[str, Any]:
+        """
+        获取卖出历史
+        
+        Args:
+            app_id: Steam App ID
+            start: 起始位置
+            count: 获取数量
+            
+        Returns:
+            卖出历史
+        """
+        if not self.session_token:
+            raise Exception("需要 session_token 才能查看卖出历史")
+        
+        await asyncio.sleep(STEAM_MARKET_API_DELAY)
+        
+        session = await self._get_market_session()
+        
+        url = f"{self.market_url}/myhistory/"
+        params = {
+            "start": start,
+            "count": count,
+            "l": "schinese",
+            "cc": "CN"
+        }
+        
+        cookies = {
+            "sessionid": self._generate_session_id(),
+            "steamLoginSecure": self.session_token,
+        }
+        
+        headers = await self._build_market_headers()
+        
+        try:
+            async with session.get(
+                url,
+                params=params,
+                cookies=cookies,
+                headers=headers
+            ) as response:
+                if response.status != 200:
+                    return {"success": False, "error": f"HTTP {response.status}"}
+                
+                data = await response.json()
+                return {
+                    "success": True,
+                    "sales": data.get("sales", []),
+                    "total_count": data.get("total_count", 0)
+                }
+        except Exception as e:
+            logger.error(f"获取卖出历史异常: {e}")
+            return {"success": False, "error": str(e)}
 
 
 # 全局 API 实例

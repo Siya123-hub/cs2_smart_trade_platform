@@ -245,7 +245,18 @@ export interface ArbitrageRuleCreate {
 export interface ApiResponse<T> {
   data: T;
   message?: string;
-  code?: number;
+  code?: string;
+}
+
+export interface ApiError {
+  status: string;
+  code: string;
+  message: string;
+  errors?: Array<{
+    code: string;
+    message: string;
+    field?: string;
+  }>;
 }
 
 export interface PaginatedResponse<T> {
@@ -253,6 +264,25 @@ export interface PaginatedResponse<T> {
   total: number;
   page: number;
   page_size: number;
+}
+
+// 健康检查类型
+export interface HealthCheckResponse {
+  status: string;
+  system?: {
+    platform: string;
+    python_version: string;
+  };
+  dependencies?: {
+    sqlalchemy: string;
+    redis: string;
+    aiohttp: string;
+  };
+}
+
+export interface ReadinessCheckResponse {
+  status: string;
+  checks: Record<string, string>;
 }
 
 // 通用类型
