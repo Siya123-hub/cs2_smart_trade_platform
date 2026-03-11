@@ -2,14 +2,16 @@
 """
 通知推送服务
 支持WebSocket实时推送和消息队列
+
+注意: WebSocketManager 已移至 websocket_manager.py 增强版
 """
 from typing import Dict, List, Set, Optional
-from fastapi import WebSocket
 from datetime import datetime
 from enum import Enum
-import json
 import logging
 import asyncio
+
+from app.services.websocket_manager import WebSocketManager as EnhancedWebSocketManager
 
 logger = logging.getLogger(__name__)
 
@@ -32,103 +34,21 @@ class NotificationPriority(str, Enum):
     URGENT = "urgent"
 
 
-class WebSocketManager:
-    """WebSocket连接管理器"""
-    
-    def __init__(self):
-        # user_id -> Set[WebSocket]
-        self.active_connections: Dict[int, Set[WebSocket]] = {}
-        # websocket -> user_id
-        self.connection_users: Dict[WebSocket, int] = {}
-        # 离线消息队列
-        self.offline_messages: Dict[int, List[dict]] = {}
-    
-    async def connect(self, websocket: WebSocket, user_id: int):
-        """WebSocket连接"""
-        await websocket.accept()
-        
-        if user_id not in self.active_connections:
-            self.active_connections[user_id] = set()
-        
-        self.active_connections[user_id].add(websocket)
-        self.connection_users[websocket] = user_id
-        
-        logger.info(f"User {user_id} connected via WebSocket. Total connections: {len(self.active_connections[user_id])}")
-        
-        # 发送离线消息
-        if user_id in self.offline_messages and self.offline_messages[user_id]:
-            for message in self.offline_messages[user_id]:
-                await self.send_personal_message(message, user_id)
-            self.offline_messages[user_id] = []
-    
-    def disconnect(self, websocket: WebSocket):
-        """WebSocket断开"""
-        user_id = self.connection_users.pop(websocket, None)
-        
-        if user_id and user_id in self.active_connections:
-            self.active_connections[user_id].discard(websocket)
-            
-            if not self.active_connections[user_id]:
-                del self.active_connections[user_id]
-                logger.info(f"User {user_id} disconnected. All connections closed.")
-    
-    async def send_personal_message(self, message: dict, user_id: int):
-        """发送个人消息"""
-        if user_id not in self.active_connections:
-            # 存储离线消息
-            if user_id not in self.offline_messages:
-                self.offline_messages[user_id] = []
-            self.offline_messages[user_id].append(message)
-            logger.info(f"User {user_id} offline. Message queued.")
-            return False
-        
-        disconnected = set()
-        
-        for websocket in self.active_connections[user_id]:
-            try:
-                await websocket.send_json(message)
-            except Exception as e:
-                logger.error(f"Failed to send message to user {user_id}: {e}")
-                disconnected.add(websocket)
-        
-        # 清理断开的连接
-        for ws in disconnected:
-            self.disconnect(ws)
-        
-        return True
-    
-    async def broadcast(self, message: dict, exclude_users: Optional[List[int]] = None):
-        """广播消息"""
-        exclude_set = set(exclude_users or [])
-        
-        for user_id, connections in self.active_connections.items():
-            if user_id in exclude_set:
-                continue
-            
-            for websocket in connections:
-                try:
-                    await websocket.send_json(message)
-                except Exception as e:
-                    logger.error(f"Failed to broadcast to user {user_id}: {e}")
-    
-    def get_online_users(self) -> List[int]:
-        """获取在线用户列表"""
-        return list(self.active_connections.keys())
-    
-    def is_user_online(self, user_id: int) -> bool:
-        """检查用户是否在线"""
-        return user_id in self.active_connections and len(self.active_connections[user_id]) > 0
-    
-    def get_connection_count(self, user_id: int) -> int:
-        """获取用户连接数"""
-        return len(self.active_connections.get(user_id, set()))
+# 使用增强版 WebSocketManager (来自 websocket_manager.py)
+ws_manager = EnhancedWebSocketManager()
+
+
+def _get_global_ws_manager() -> EnhancedWebSocketManager:
+    """获取全局WebSocket管理器实例"""
+    return ws_manager
 
 
 class NotificationService:
     """通知服务"""
     
-    def __init__(self, ws_manager: WebSocketManager):
-        self.ws_manager = ws_manager
+    def __init__(self, ws_manager: EnhancedWebSocketManager = None):
+        # 使用传入的ws_manager，否则使用全局实例
+        self.ws_manager = ws_manager if ws_manager is not None else _get_global_ws_manager()
     
     async def send_notification(
         self,
@@ -220,6 +140,5 @@ class NotificationService:
         )
 
 
-# 全局实例
-ws_manager = WebSocketManager()
+# 全局实例 - 使用增强版 WebSocketManager
 notification_service = NotificationService(ws_manager)

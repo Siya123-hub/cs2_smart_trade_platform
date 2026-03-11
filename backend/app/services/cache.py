@@ -9,6 +9,76 @@ from typing import Any, Dict, Optional, Callable
 from threading import Lock
 from collections import OrderedDict
 from enum import Enum
+import asyncio
+
+# Prometheus 监控指标
+try:
+    from prometheus_client import Counter, Gauge, Histogram
+    PROMETHEUS_AVAILABLE = True
+    
+    # 缓存操作计数器
+    cache_operations_total = Counter(
+        'cache_operations_total',
+        'Total cache operations',
+        ['operation', 'backend', 'result']
+    )
+    
+    # 缓存清理任务状态
+    cache_cleanup_status = Gauge(
+        'cache_cleanup_status',
+        'Cache cleanup task status (0=idle, 1=running, 2=error)',
+        ['backend']
+    )
+    
+    cache_cleanup_total = Counter(
+        'cache_cleanup_total',
+        'Total number of cache cleanup runs',
+        ['backend', 'result']  # result: success, error
+    )
+    
+    cache_entries_cleaned = Gauge(
+        'cache_entries_cleaned',
+        'Number of cache entries cleaned',
+        ['backend']
+    )
+    
+    # 缓存过期条目数
+    cache_expired_entries = Gauge(
+        'cache_expired_entries',
+        'Number of expired cache entries',
+        ['backend']
+    )
+    
+    # 缓存大小
+    cache_size = Gauge(
+        'cache_size',
+        'Current number of cache entries',
+        ['backend']
+    )
+    
+    # 缓存清理耗时
+    cache_cleanup_duration = Histogram(
+        'cache_cleanup_duration_seconds',
+        'Cache cleanup duration in seconds',
+        ['backend']
+    )
+except ImportError:
+    PROMETHEUS_AVAILABLE = False
+    # 空指标实现
+    class _DummyMetric:
+        def labels(self, **kwargs): return self
+        def inc(self, n=1): pass
+        def dec(self, n=1): pass
+        def set(self, n): pass
+        def observe(self, n): pass
+    
+    cache_operations_total = _DummyMetric()
+    cache_cleanup_status = _DummyMetric()
+    cache_cleanup_total = _DummyMetric()
+    cache_entries_cleaned = _DummyMetric()
+    cache_expired_entries = _DummyMetric()
+    cache_size = _DummyMetric()
+    cache_cleanup_duration = _DummyMetric()
 
 logger = logging.getLogger(__name__)
 
@@ -469,23 +539,84 @@ class CacheManager:
         await self._start_cleanup_task()
     
     async def _start_cleanup_task(self) -> None:
-        """启动后台清理任务"""
+        """启动后台清理任务（带重试机制）"""
         if self._current_backend == CacheBackend.MEMORY:
-            # 每5分钟清理一次过期缓存
             import asyncio
+            
+            # 清理任务配置
+            cleanup_config = {
+                "interval": 300,  # 5分钟
+                "max_retries": 3,
+                "retry_delay": 5,  # 重试延迟（秒）
+            }
             
             async def cleanup_loop():
                 while True:
-                    await asyncio.sleep(300)  # 5分钟
-                    try:
-                        cleaned = self._memory_cache.cleanup_expired()
-                        if cleaned > 0:
-                            logger.debug(f"Cleaned up {cleaned} expired cache entries")
-                    except Exception as e:
-                        logger.error(f"Cache cleanup error: {e}")
+                    await asyncio.sleep(cleanup_config["interval"])
+                    await self._execute_cleanup_with_retry(cleanup_config["max_retries"], cleanup_config["retry_delay"])
             
             # 创建后台任务（不阻塞启动）
             asyncio.create_task(cleanup_loop())
+    
+    async def _execute_cleanup_with_retry(self, max_retries: int = 3, retry_delay: int = 5) -> None:
+        """执行清理任务（带重试机制）"""
+        backend_name = self._current_backend.value
+        
+        for attempt in range(max_retries):
+            try:
+                cache_cleanup_status.labels(backend=backend_name).set(1)  # running
+                
+                start_time = time.time()
+                
+                # 执行清理
+                cleaned = self._memory_cache.cleanup_expired()
+                duration = time.time() - start_time
+                
+                # 更新指标
+                cache_cleanup_duration.labels(backend=backend_name).observe(duration)
+                cache_entries_cleaned.labels(backend=backend_name).set(cleaned)
+                cache_cleanup_total.labels(backend=backend_name, result="success").inc()
+                cache_cleanup_status.labels(backend=backend_name).set(0)  # idle
+                
+                # 更新过期条目计数
+                cache_expired_entries.labels(backend=backend_name).set(0)
+                
+                if cleaned > 0:
+                    logger.info(f"Cache cleanup completed: {cleaned} entries cleaned in {duration:.2f}s")
+                
+                return  # 成功退出
+                
+            except Exception as e:
+                logger.error(f"Cache cleanup attempt {attempt + 1} failed: {e}")
+                cache_cleanup_total.labels(backend=backend_name, result="error").inc()
+                
+                if attempt < max_retries - 1:
+                    # 指数退避
+                    delay = retry_delay * (2 ** attempt)
+                    logger.info(f"Retrying cleanup in {delay}s...")
+                    await asyncio.sleep(delay)
+        
+        # 所有重试都失败
+        cache_cleanup_status.labels(backend=backend_name).set(2)  # error
+        logger.error(f"Cache cleanup failed after {max_retries} attempts")
+
+    def get_cleanup_status(self) -> Dict[str, Any]:
+        """获取清理任务状态"""
+        backend_name = self._current_backend.value
+        status_value = cache_cleanup_status.labels(backend=backend_name)._value if PROMETHEUS_AVAILABLE else 0
+        
+        status_map = {
+            0: "idle",
+            1: "running",
+            2: "error"
+        }
+        
+        return {
+            "backend": backend_name,
+            "status": status_map.get(status_value, "unknown"),
+            "status_code": status_value,
+            "prometheus_available": PROMETHEUS_AVAILABLE
+        }
     
     @property
     def backend(self) -> CacheBackend:
@@ -606,10 +737,17 @@ class CacheManager:
         if self._current_backend == CacheBackend.REDIS and self._redis_cache:
             stats = self._redis_cache.get_stats()
             stats["backend"] = self._current_backend.value
+            stats["cleanup_status"] = self.get_cleanup_status()
             return stats
         
         stats = self._memory_cache.get_stats()
         stats["backend"] = self._current_backend.value
+        stats["cleanup_status"] = self.get_cleanup_status()
+        
+        # 更新 Prometheus 缓存大小指标
+        if PROMETHEUS_AVAILABLE:
+            cache_size.labels(backend=self._current_backend.value).set(stats["total_keys"])
+        
         return stats
     
     async def cleanup_expired(self) -> int:

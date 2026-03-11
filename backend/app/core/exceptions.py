@@ -2,6 +2,7 @@
 """
 统一的错误处理模块
 """
+import re
 from typing import Optional, Dict, Any
 from fastapi import HTTPException, status
 from fastapi.responses import JSONResponse
@@ -13,6 +14,34 @@ import traceback
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# 敏感信息脱敏模式
+SENSITIVE_PATTERNS = [
+    r'(password|passwd|pwd)[=:\s][^\s,}]*',
+    r'(secret|token|key|api_key|apikey)[=:\s][^\s,}]*',
+    r'(connection|conn|redis|mysql|postgres)[^\s,}]*',
+    r'Bearer\s+[A-Za-z0-9\-._~+/]+=*',
+]
+
+
+def sanitize_error_message(message: str) -> str:
+    """脱敏错误消息"""
+    for pattern in SENSITIVE_PATTERNS:
+        message = re.sub(pattern, lambda m: m.group(1).split('=')[0].strip() + '=***', message, flags=re.IGNORECASE)
+    return message
+
+
+def sanitize_details(details: dict, depth: int = 0) -> dict:
+    """递归脱敏字典中的敏感字段"""
+    if depth > 3:
+        return {"...": "max depth reached"}
+    sensitive_keys = {'password', 'secret', 'token', 'key', 'connection', 'credential', 'api_key'}
+    if isinstance(details, dict):
+        return {k: "***" if k.lower() in sensitive_keys else sanitize_details(v, depth+1) 
+                for k, v in details.items()}
+    elif isinstance(details, list):
+        return [sanitize_details(item, depth+1) for item in details]
+    return details
 
 
 class APIError(Exception):
@@ -189,8 +218,8 @@ async def generic_error_handler(request: Request, exc: Exception) -> JSONRespons
     error_response = {
         "error": {
             "code": "INTERNAL_ERROR",
-            "message": "服务器内部错误" if not settings.DEBUG else str(exc),
-            "details": {"exception_type": type(exc).__name__} if settings.DEBUG else {},
+            "message": sanitize_error_message(str(exc)) if settings.DEBUG else "服务器内部错误",
+            "details": sanitize_details({"exception_type": type(exc).__name__}) if settings.DEBUG else {},
             "path": str(request.url.path),
         }
     }
