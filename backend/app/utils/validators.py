@@ -6,7 +6,7 @@ import re
 from typing import Any, Optional, List, Dict
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
-from pydantic import Field, validator
+from pydantic import Field, field_validator
 from pydantic.types import conint, confloat
 
 
@@ -384,7 +384,8 @@ def validate_pagination(page: Any, page_size: Any) -> tuple:
 class ValidatedModelMixin:
     """Pydantic 模型验证器混入类"""
     
-    @validator('*', pre=True)
+    @field_validator('*', mode='before')
+    @classmethod
     def strip_strings(cls, v):
         """去除字符串首尾空格"""
         if isinstance(v, str):
