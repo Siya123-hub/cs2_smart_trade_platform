@@ -11,6 +11,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.0] - 2026-03-11
+
+### Added
+- **V2 API 端点**: 新增完整的 RESTful API v2 版本
+  - `auth.py` (296行) - 认证端点（登录/登出/令牌刷新）
+  - `bots.py` (391行) - 机器人管理（列表/添加/移除/状态）
+  - `inventory.py` (365行) - 库存管理（查询/上架/下架）
+  - `monitors.py` (390行) - 监控端点（价格/库存监控）
+  - `notifications.py` (322行) - 通知端点（CRUD/标记已读）
+  - `websocket.py` - WebSocket 实时推送支持
+- **通知模块**: 新增完整通知系统
+  - `notification.py` (85行) - 通知数据模型
+  - `notification_service.py` (225行) - 通知服务层
+- **前端通知组件**:
+  - `notifications.ts` (79行) - 通知 API 封装
+  - `NotificationPanel.vue` (388行) - 通知面板组件
+  - `apiClient.ts` (235行) - API 客户端工具
+- **统一异常处理**: 新增 `exceptions.py` 异常类
+  - APIError 基类及子类（ValidationError/NotFoundError/UnauthorizedError/ForbiddenError/ConflictError/RateLimitError/ExternalServiceError/BusinessError）
+  - 统一错误处理器
+
+### Changed
+- **Market API 优化**: 精简 v1 market 端点
+- **Router 重构**: V2 路由分组和中间件调整
+- **Config 更新**: 新增通知相关配置项
+- **Audit 中间件**: 优化日志格式
+- **前端 API**: 重构 API 调用方式
+
+### Fixed
+- 前后端 API 对接一致性
+
+---
+
 ## [1.1.0] - 2026-03-11
 
 ### Added
