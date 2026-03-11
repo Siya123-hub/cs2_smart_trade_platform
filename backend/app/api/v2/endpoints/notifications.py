@@ -117,7 +117,7 @@ async def get_notifications(
         if n.data:
             try:
                 data = json.loads(n.data)
-            except:
+            except json.JSONDecodeError:
                 pass
         
         notification_list.append(NotificationResponse(
@@ -186,7 +186,7 @@ async def get_notification(
     if notification.data:
         try:
             data = json.loads(notification.data)
-        except:
+        except json.JSONDecodeError:
             pass
     
     return NotificationResponse(
@@ -236,7 +236,7 @@ async def mark_as_read(
     if notification.data:
         try:
             data = json.loads(notification.data)
-        except:
+        except json.JSONDecodeError:
             pass
     
     return NotificationResponse(

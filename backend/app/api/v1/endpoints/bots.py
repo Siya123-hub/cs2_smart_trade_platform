@@ -3,16 +3,22 @@
 机器人端点
 """
 from typing import List, Optional
-from fastapi import APIRouter, Depends, status, Query
+from fastapi import APIRouter, Depends, status, Query, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, update
 from datetime import datetime
+import json
 
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.core.exceptions import (
-    APIError, NotFoundError, UnauthorizedError, 
+    APIError, NotFoundError, UnauthorizedError,
     BusinessError, ExternalServiceError, ValidationError
+)
+from app.core.idempotency import (
+    generate_idempotency_key,
+    check_idempotency,
+    save_idempotent_response,
 )
 from app.models.user import User
 from app.models.bot import Bot, BotTrade
@@ -41,24 +47,44 @@ async def get_bots(
 ):
     """获取机器人列表"""
     query = select(Bot).where(Bot.owner_id == current_user.id)
-    
+
     if status:
         query = query.where(Bot.status == status)
-    
+
     query = query.offset(skip).limit(limit).order_by(Bot.created_at.desc())
     result = await db.execute(query)
     bots = result.scalars().all()
-    
+
     return bots
 
-
+    
 @router.post("/", response_model=BotResponse, status_code=status.HTTP_201_CREATED)
 async def create_bot(
     bot_data: BotCreate,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")
 ):
-    """创建机器人"""
+    """创建机器人（支持幂等性）"""
+    
+    # 幂等性检查
+    if idempotency_key:
+        # 生成内部幂等性 key
+        request_body = json.dumps(bot_data.model_dump(), sort_keys=True)
+        internal_key = generate_idempotency_key(
+            user_id=current_user.id,
+            method="POST",
+            path="/api/v1/bots",
+            request_body=request_body
+        )
+        
+        # 检查是否已处理过相同请求
+        is_duplicate, cached_response = await check_idempotency(internal_key)
+        if is_duplicate and cached_response:
+            # 返回缓存的响应
+            return BotResponse(**cached_response)
+    
+    # 创建机器人
     bot = Bot(
         name=bot_data.name,
         steam_id=bot_data.steam_id,
@@ -72,6 +98,11 @@ async def create_bot(
     db.add(bot)
     await db.commit()
     await db.refresh(bot)
+    
+    # 保存幂等性响应
+    if idempotency_key:
+        response_data = BotResponse.model_validate(bot).model_dump()
+        await save_idempotent_response(internal_key, response_data)
     
     return bot
 
@@ -87,10 +118,10 @@ async def get_bot(
         select(Bot).where(Bot.id == bot_id, Bot.owner_id == current_user.id)
     )
     bot = result.scalar_one_or_none()
-    
+
     if not bot:
         raise NotFoundError("机器人", bot_id)
-    
+
     return bot
 
 
@@ -106,19 +137,19 @@ async def update_bot(
         select(Bot).where(Bot.id == bot_id, Bot.owner_id == current_user.id)
     )
     bot = result.scalar_one_or_none()
-    
+
     if not bot:
         raise NotFoundError("机器人", bot_id)
-    
+
     # 更新字段
     update_data = bot_data.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         setattr(bot, field, value)
-    
+
     bot.updated_at = datetime.utcnow()
     await db.commit()
     await db.refresh(bot)
-    
+
     return bot
 
 
@@ -133,13 +164,13 @@ async def delete_bot(
         select(Bot).where(Bot.id == bot_id, Bot.owner_id == current_user.id)
     )
     bot = result.scalar_one_or_none()
-    
+
     if not bot:
         raise NotFoundError("机器人", bot_id)
-    
+
     await db.delete(bot)
     await db.commit()
-    
+
     return None
 
 
@@ -155,23 +186,23 @@ async def login_bot(
         select(Bot).where(Bot.id == bot_id, Bot.owner_id == current_user.id)
     )
     bot = result.scalar_one_or_none()
-    
+
     if not bot:
         raise NotFoundError("机器人", bot_id)
-    
+
     # 如果提供了新的认证信息，更新机器人
     if login_data:
         if login_data.session_token:
             bot.session_token = login_data.session_token
         if login_data.ma_file:
             bot.ma_file = login_data.ma_file
-    
+
     # 实现实际的 Steam 登录逻辑
     if bot.session_token or bot.ma_file:
         try:
             # 使用 SteamService 进行登录验证
             steam_service = SteamService()
-            
+
             if bot.session_token:
                 # 验证 session token 是否有效
                 # 这里简化处理，实际需要调用 Steam API 验证
@@ -181,7 +212,7 @@ async def login_bot(
                     ma_file=bot.ma_file
                 )
                 login_success = await steam_trade.login()
-                
+
                 if login_success:
                     bot.status = 'online'
                     bot.last_activity = datetime.utcnow()
@@ -199,10 +230,10 @@ async def login_bot(
             raise ExternalServiceError("Steam", f"Steam 登录失败: {str(e)}")
     else:
         raise BusinessError("请提供 session_token 或 ma_file")
-    
+
     await db.commit()
     await db.refresh(bot)
-    
+
     return BotLoginResponse(
         success=True,
         message="机器人登录成功",
@@ -221,15 +252,15 @@ async def logout_bot(
         select(Bot).where(Bot.id == bot_id, Bot.owner_id == current_user.id)
     )
     bot = result.scalar_one_or_none()
-    
+
     if not bot:
         raise NotFoundError("机器人", bot_id)
-    
+
     bot.status = 'offline'
     bot.last_activity = datetime.utcnow()
     await db.commit()
     await db.refresh(bot)
-    
+
     return BotLoginResponse(
         success=True,
         message="机器人已登出",
@@ -248,13 +279,13 @@ async def refresh_bot_session(
         select(Bot).where(Bot.id == bot_id, Bot.owner_id == current_user.id)
     )
     bot = result.scalar_one_or_none()
-    
+
     if not bot:
         raise NotFoundError("机器人", bot_id)
-    
+
     if not bot.steam_id:
         raise BusinessError("机器人未绑定 Steam 账户")
-    
+
     # 实现实际的 session 刷新逻辑
     try:
         # 使用 SteamTrade 进行 session 刷新
@@ -263,16 +294,16 @@ async def refresh_bot_session(
             session_token=bot.session_token or "",
             ma_file=bot.ma_file
         )
-        
+
         # 尝试验证 session 是否仍然有效
         # 实际实现中需要调用 Steam API 验证 token
         # 这里假设如果能创建连接则 session 有效
         await steam_trade.login()
-        
+
         bot.last_activity = datetime.utcnow()
         await db.commit()
         await db.refresh(bot)
-        
+
         return BotLoginResponse(
             success=True,
             message="Session 刷新成功",
@@ -293,10 +324,10 @@ async def get_bot_inventory(
         select(Bot).where(Bot.id == bot_id, Bot.owner_id == current_user.id)
     )
     bot = result.scalar_one_or_none()
-    
+
     if not bot:
         raise NotFoundError("机器人", bot_id)
-    
+
     # 从数据库获取该机器人的库存
     from app.models.inventory import Inventory
     inventory_result = await db.execute(
@@ -306,7 +337,7 @@ async def get_bot_inventory(
         )
     )
     inventory_items = inventory_result.scalars().all()
-    
+
     # 转换为响应格式
     items = [
         {
@@ -319,7 +350,7 @@ async def get_bot_inventory(
         }
         for item in inventory_items
     ]
-    
+
     return BotInventoryResponse(
         items=items,
         total_count=len(items)
@@ -339,16 +370,16 @@ async def get_bot_trades(
         select(Bot).where(Bot.id == bot_id, Bot.owner_id == current_user.id)
     )
     bot = result.scalar_one_or_none()
-    
+
     if not bot:
         raise NotFoundError("机器人", bot_id)
-    
+
     # 获取交易记录
     query = select(BotTrade).where(BotTrade.bot_id == bot_id)
     query = query.offset(skip).limit(limit).order_by(BotTrade.created_at.desc())
     result = await db.execute(query)
     trades = result.scalars().all()
-    
+
     trade_list = []
     for trade in trades:
         trade_list.append({
@@ -360,7 +391,7 @@ async def get_bot_trades(
             "created_at": trade.created_at.isoformat() if trade.created_at else None,
             "accepted_at": trade.accepted_at.isoformat() if trade.accepted_at else None,
         })
-    
+
     return BotTradeResponse(
         trades=trade_list,
         total_count=len(trade_list)

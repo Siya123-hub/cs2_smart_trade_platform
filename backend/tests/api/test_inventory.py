@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.user import User
 from app.models.item import Item
 from app.models.bot import Bot
-from app.models.inventory import InventoryItem
+from app.models.inventory import Inventory
 from app.core.security import get_password_hash, create_access_token
 
 
@@ -61,9 +61,9 @@ async def create_test_bot(test_db: AsyncSession, user: User) -> Bot:
     return bot
 
 
-async def create_test_inventory_item(test_db: AsyncSession, bot: Bot, item: Item) -> InventoryItem:
+async def create_test_inventory_item(test_db: AsyncSession, bot: Bot, item: Item) -> Inventory:
     """创建测试库存物品"""
-    inventory_item = InventoryItem(
+    inventory_item = Inventory(
         bot_id=bot.id,
         item_id=item.id,
         asset_id="test_asset_123",

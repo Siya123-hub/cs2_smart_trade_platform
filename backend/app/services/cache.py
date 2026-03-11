@@ -423,20 +423,45 @@ class CacheManager:
         # 自动清理定时器（仅内存缓存）
         self._cleanup_task = None
     
-    async def initialize(self) -> None:
-        """初始化缓存"""
+    async def initialize(self, max_retries: int = 3, retry_delay: float = 1.0) -> None:
+        """
+        初始化缓存（带重试机制）
+        
+        Args:
+            max_retries: 最大重试次数
+            retry_delay: 重试延迟（秒），支持指数退避
+        """
         if self._backend == CacheBackend.REDIS:
-            self._redis_cache = RedisCache(self._redis_url)
-            connected = await self._redis_cache.connect()
+            last_error = None
             
-            if not connected:
-                logger.warning("Redis connection failed, falling back to memory cache")
+            for attempt in range(max_retries):
+                try:
+                    self._redis_cache = RedisCache(self._redis_url)
+                    connected = await self._redis_cache.connect()
+                    
+                    if connected:
+                        self._current_backend = CacheBackend.REDIS
+                        logger.info(f"Cache initialized with Redis (attempt {attempt + 1})")
+                        break
+                    else:
+                        last_error = "Connection failed"
+                except Exception as e:
+                    last_error = str(e)
+                    logger.warning(f"Redis initialization attempt {attempt + 1} failed: {e}")
+                
+                # 等待后重试（指数退避）
+                if attempt < max_retries - 1:
+                    delay = retry_delay * (2 ** attempt)  # 1s, 2s, 4s
+                    logger.info(f"Retrying in {delay}s...")
+                    await asyncio.sleep(delay)
+            
+            # 所有重试都失败
+            if self._current_backend != CacheBackend.REDIS:
+                logger.warning(f"Redis connection failed after {max_retries} attempts, falling back to memory cache")
                 if self._fallback_to_memory:
                     self._current_backend = CacheBackend.MEMORY
                 else:
-                    raise RuntimeError("Failed to connect to Redis and fallback is disabled")
-            else:
-                self._current_backend = CacheBackend.REDIS
+                    raise RuntimeError(f"Failed to connect to Redis after {max_retries} attempts and fallback is disabled")
         
         logger.info(f"Cache initialized with backend: {self._current_backend.value}")
         

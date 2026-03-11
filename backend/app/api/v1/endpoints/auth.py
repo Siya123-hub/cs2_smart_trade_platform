@@ -7,8 +7,8 @@ import time
 import json
 import logging
 from datetime import timedelta
-from typing import Dict, Tuple
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from typing import Dict, Tuple, Optional
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Header
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -24,6 +24,11 @@ from app.core.security import (
 )
 from app.core.token_blacklist import add_token_to_blacklist
 from app.core.redis_manager import get_redis
+from app.core.idempotency import (
+    generate_idempotency_key,
+    check_idempotency,
+    save_idempotent_response,
+)
 from app.models.user import User
 from app.schemas.user import (
     UserCreate,
@@ -159,9 +164,27 @@ def validate_password_strength(password: str) -> Tuple[bool, str]:
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def register(
     user_data: UserCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")
 ):
-    """用户注册"""
+    """用户注册（支持幂等性）"""
+    
+    # 幂等性检查（仅对请求体生成key，不依赖用户ID因为用户还未创建）
+    if idempotency_key:
+        request_body = json.dumps(user_data.model_dump(exclude={'password': False}), sort_keys=True)
+        internal_key = generate_idempotency_key(
+            user_id=0,  # 未注册用户，使用0作为占位符
+            method="POST",
+            path="/api/v1/auth/register",
+            request_body=request_body
+        )
+        
+        # 检查是否已处理过相同请求
+        is_duplicate, cached_response = await check_idempotency(internal_key)
+        if is_duplicate and cached_response:
+            # 返回缓存的响应
+            return UserResponse(**cached_response)
+    
     # 验证密码强度
     is_valid, error_msg = validate_password_strength(user_data.password)
     if not is_valid:
@@ -200,6 +223,11 @@ async def register(
     db.add(user)
     await db.commit()
     await db.refresh(user)
+    
+    # 保存幂等性响应
+    if idempotency_key:
+        response_data = UserResponse.model_validate(user).model_dump()
+        await save_idempotent_response(internal_key, response_data)
     
     return user
 
