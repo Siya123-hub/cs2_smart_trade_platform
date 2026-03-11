@@ -85,7 +85,7 @@
               <span class="buff-price">BUFF: ¥{{ item.buff_price }}</span>
               <span class="steam-price">Steam: ¥{{ item.steam_price }}</span>
             </div>
-            <div class="item-profit" v-if="item.profit > 0">
+            <div class="item-profit" v-if="(item.profit ?? 0) > 0">
               利润: ¥{{ item.profit }} ({{ item.profit_rate }}%)
             </div>
             <div class="item-actions">
@@ -120,9 +120,10 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
+import type { MarketItem } from '@/types'
 
 const loading = ref(false)
-const itemList = ref([])
+const itemList = ref<MarketItem[]>([])
 const total = ref(0)
 const currentPage = ref(1)
 const pageSize = ref(20)
@@ -169,11 +170,11 @@ const handleSearch = () => {
   fetchItems()
 }
 
-const handleBuy = (item: any) => {
+const handleBuy = (item: MarketItem) => {
   ElMessage.info(`购买 ${item.name}`)
 }
 
-const handleAddMonitor = (item: any) => {
+const handleAddMonitor = (item: MarketItem) => {
   ElMessage.info(`添加监控 ${item.name}`)
 }
 

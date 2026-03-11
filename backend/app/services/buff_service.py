@@ -13,6 +13,17 @@ from datetime import datetime
 import aiohttp
 
 from app.core.config import settings
+from app.core.circuit_breaker import circuit_breaker, CircuitBreakerOpen
+
+
+class BuffAPIError(Exception):
+    """BUFF API 通用错误"""
+    pass
+
+
+class BuffAPICircuitOpen(BuffAPIError):
+    """BUFF API 熔断器开启"""
+    pass
 
 
 async def _exponential_backoff_with_jitter(
@@ -61,6 +72,7 @@ class BuffAPI:
         """清理资源"""
         await self.close()
     
+    @circuit_breaker(name="buff_api", failure_threshold=5, recovery_timeout=30)
     async def _request(
         self,
         method: str,
@@ -117,11 +129,15 @@ class BuffAPI:
             except asyncio.TimeoutError:
                 retry_count += 1
                 if retry_count > max_retries:
-                    raise Exception(f"BUFF API 请求超时: 超过最大重试次数 {max_retries}")
+                    raise BuffAPIError(f"BUFF API 请求超时: 超过最大重试次数 {max_retries}")
                 delay = await _exponential_backoff_with_jitter(retry_count)
                 logger.warning(f"BUFF API 请求超时，第 {retry_count} 次重试，等待 {delay:.2f} 秒...")
                 await asyncio.sleep(delay)
                 continue
+            except CircuitBreakerOpen as e:
+                # 熔断器开启，不再重试，直接抛出异常
+                logger.warning(f"BUFF API 熔断器开启: {e}")
+                raise BuffAPICircuitOpen(str(e))
             except aiohttp.ClientError as e:
                 retry_count += 1
                 if retry_count > max_retries:

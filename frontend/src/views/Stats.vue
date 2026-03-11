@@ -263,7 +263,12 @@ const overviewStats = ref({
 })
 
 const profitStats = ref<any>({})
-const inventoryValue = ref({
+const inventoryValue = ref<{
+  total_value: number;
+  by_platform: Record<string, number>;
+  by_rarity: Record<string, number>;
+  top_items: Array<{ name: string; value: number }>;
+}>({
   total_value: 0,
   by_platform: {},
   by_rarity: {},

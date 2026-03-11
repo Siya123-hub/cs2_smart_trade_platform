@@ -29,6 +29,9 @@ from app.utils.validators import (
 
 logger = logging.getLogger(__name__)
 
+# 默认超时配置
+DEFAULT_TIMEOUT = 30  # 秒
+
 
 class TradingEngine:
     """交易引擎"""
@@ -93,9 +96,10 @@ class TradingEngine:
         item_id: int,
         max_price: float,
         quantity: int = 1,
-        user_id: int = None
+        user_id: int = None,
+        timeout: int = DEFAULT_TIMEOUT
     ) -> Dict[str, Any]:
-        """执行买入"""
+        """执行买入 (带超时控制)"""
         # 输入验证（使用 validators.py 中的函数）
         validator_validate_item_id(item_id)
         validator_validate_price(max_price, "max_price")
@@ -117,8 +121,18 @@ class TradingEngine:
         if not item:
             raise Exception("饰品不存在")
         
-        # 获取当前价格
-        current_price = self.buff_client.get_price_overview(item.market_hash_name)
+        # 获取当前价格 (带超时控制)
+        try:
+            current_price = await asyncio.wait_for(
+                self.buff_client.get_price_overview(item.market_hash_name),
+                timeout=timeout
+            )
+        except asyncio.TimeoutError:
+            return ServiceResponse.err(
+                message="获取价格超时",
+                code="TIMEOUT"
+            )
+        
         if not current_price:
             raise Exception("无法获取价格")
         
@@ -130,12 +144,15 @@ class TradingEngine:
                 code="PRICE_TOO_HIGH"
             )
         
-        # 创建订单
+        # 创建订单 (带超时控制)
         try:
-            order_result = await self.buff_client.create_order(
-                goods_id=item.id,
-                price=price,
-                num=quantity
+            order_result = await asyncio.wait_for(
+                self.buff_client.create_order(
+                    goods_id=item.id,
+                    price=price,
+                    num=quantity
+                ),
+                timeout=timeout
             )
             
             # 创建本地订单记录

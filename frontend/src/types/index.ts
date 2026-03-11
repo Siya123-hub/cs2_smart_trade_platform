@@ -124,6 +124,15 @@ export interface OrderListResponse {
   page_size: number;
 }
 
+// 市场页面专用类型（包含计算字段）
+export interface MarketItem extends Item {
+  image?: string;
+  buff_price?: number;
+  steam_price?: number;
+  profit?: number;
+  profit_rate?: number;
+}
+
 // 库存相关类型
 export interface Inventory {
   id: number;

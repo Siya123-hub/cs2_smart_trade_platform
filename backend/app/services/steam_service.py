@@ -10,8 +10,19 @@ from contextlib import asynccontextmanager
 import aiohttp
 
 from app.core.config import settings
+from app.core.circuit_breaker import circuit_breaker, CircuitBreakerOpen, CircuitBreaker
 
 logger = logging.getLogger(__name__)
+
+
+class SteamAPIError(Exception):
+    """Steam API 通用错误"""
+    pass
+
+
+class SteamAPICircuitOpen(SteamAPIError):
+    """Steam API 熔断器开启"""
+    pass
 
 
 class SteamAPI:
@@ -127,11 +138,15 @@ class SteamAPI:
                 return await response.json()
         except asyncio.TimeoutError:
             logger.error(f"Steam API 请求超时: {url}")
-            raise
+            raise SteamAPIError(f"请求超时: {url}")
+        except CircuitBreakerOpen as e:
+            logger.warning(f"Steam API 熔断器开启: {e}")
+            raise SteamAPICircuitOpen(str(e))
         except aiohttp.ClientError as e:
             logger.error(f"Steam API 连接错误: {e}")
-            raise
+            raise SteamAPIError(f"连接错误: {e}")
     
+    @circuit_breaker(name="steam_api", failure_threshold=5, recovery_timeout=30)
     async def get_player_summaries(self, steam_ids: List[str]) -> List[Dict[str, Any]]:
         """获取玩家基本信息"""
         if not self.api_key:
@@ -147,6 +162,7 @@ class SteamAPI:
         
         return data.get("response", {}).get("players", [])
     
+    @circuit_breaker(name="steam_price", failure_threshold=5, recovery_timeout=30)
     async def get_price_overview(
         self,
         market_hash_name: str,
@@ -169,6 +185,7 @@ class SteamAPI:
             logger.warning(f"获取价格概览失败: {market_hash_name}, 错误: {e}")
             return None
     
+    @circuit_breaker(name="steam_listings", failure_threshold=5, recovery_timeout=30)
     async def get_listings(
         self,
         market_hash_name: str,
@@ -193,6 +210,7 @@ class SteamAPI:
             logger.warning(f"获取市场挂单失败: {market_hash_name}, 错误: {e}")
             return None
     
+    @circuit_breaker(name="steam_histogram", failure_threshold=5, recovery_timeout=30)
     async def get_price_histogram(
         self,
         market_hash_name: str,
