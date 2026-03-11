@@ -26,6 +26,53 @@ class SteamAPI:
         self.market_url = "https://steamcommunity.com/market"
         self._session: Optional[aiohttp.ClientSession] = None
     
+    async def health_check(self) -> bool:
+        """
+        检查 Session 健康状态
+        
+        Returns:
+            是否健康
+        """
+        if self._session is None:
+            return False
+        
+        # 检查 session 是否已关闭
+        if self._session.closed:
+            return False
+        
+        # 尝试发送一个轻量级请求来验证连接
+        try:
+            # 使用一个简单且快速的 API 端点来检查连接
+            test_url = f"{self.base_url}/ISteamUser/GetPlayerSummaries/v0002/"
+            params = {"key": self.api_key, "steamids": "76561197960435530"}  # 一个测试ID
+            
+            async with self._session.get(
+                test_url,
+                params=params,
+                timeout=aiohttp.ClientTimeout(total=5)
+            ) as response:
+                # 检查响应状态码是否合理
+                return response.status in (200, 400, 401)  # 400/401 表示API有效但参数问题，session本身是健康的
+        except asyncio.TimeoutError:
+            logger.warning("Steam API 健康检查超时")
+            return False
+        except aiohttp.ClientError as e:
+            logger.warning(f"Steam API 健康检查失败: {e}")
+            return False
+        except Exception as e:
+            logger.warning(f"Steam API 健康检查异常: {e}")
+            return False
+    
+    async def ensure_healthy_session(self):
+        """
+        确保 Session 处于健康状态，必要时重新创建
+        """
+        if not await self.health_check():
+            logger.info("Steam API Session 不健康，重新创建...")
+            await self.close()
+            # 重新创建 session
+            self._session = aiohttp.ClientSession(timeout=self.DEFAULT_TIMEOUT)
+    
     @property
     def session(self) -> aiohttp.ClientSession:
         """获取或创建 session（延迟初始化）"""

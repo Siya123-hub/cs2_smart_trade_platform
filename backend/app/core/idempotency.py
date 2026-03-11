@@ -4,6 +4,7 @@ API 幂等性保护模块
 防止重复请求导致的重复操作
 """
 import hashlib
+import json
 import logging
 from datetime import datetime, timedelta
 from typing import Optional
@@ -16,6 +17,23 @@ logger = logging.getLogger(__name__)
 IDEMPOTENCY_PREFIX = "idempotency:"
 # 默认过期时间 24 小时
 DEFAULT_TTL_SECONDS = 86400
+
+
+def _recursive_sort(obj):
+    """
+    递归排序对象（用于标准化 JSON 以生成一致的 key）
+    
+    Args:
+        obj: 任意 Python 对象
+    
+    Returns:
+        排序后的对象
+    """
+    if isinstance(obj, dict):
+        return {k: _recursive_sort(v) for k, v in sorted(obj.items())}
+    elif isinstance(obj, list):
+        return [_recursive_sort(item) for item in obj]
+    return obj
 
 
 def generate_idempotency_key(
@@ -36,8 +54,17 @@ def generate_idempotency_key(
     返回:
         幂等性 key
     """
+    # 尝试解析 JSON 并排序键，确保相同内容的不同 JSON 顺序产生相同的 key
+    try:
+        body_obj = json.loads(request_body)
+        sorted_body = _recursive_sort(body_obj)
+        normalized_body = json.dumps(sorted_body, sort_keys=True)
+    except (json.JSONDecodeError, TypeError):
+        # 如果不是有效的 JSON，直接使用原始字符串
+        normalized_body = request_body
+    
     # 组合所有信息
-    key_data = f"{user_id}:{method}:{path}:{request_body}"
+    key_data = f"{user_id}:{method}:{path}:{normalized_body}"
     # 使用 SHA256 生成哈希作为 key
     key_hash = hashlib.sha256(key_data.encode()).hexdigest()
     return f"{IDEMPOTENCY_PREFIX}{key_hash}"

@@ -6,12 +6,34 @@ import asyncio
 import hashlib
 import time
 import logging
+import random
 from typing import Optional, Dict, List, Any
 from datetime import datetime
 
 import aiohttp
 
 from app.core.config import settings
+
+
+async def _exponential_backoff_with_jitter(
+    retry_count: int, 
+    base_delay: float = 5.0, 
+    max_delay: float = 60.0
+) -> float:
+    """
+    指数退避+随机抖动算法
+    
+    Args:
+        retry_count: 重试次数
+        base_delay: 基础延迟（秒）
+        max_delay: 最大延迟（秒）
+    
+    Returns:
+        实际等待时间（秒）
+    """
+    delay = min(base_delay * (2 ** retry_count), max_delay)
+    jitter = delay * (0.5 + random.random())
+    return jitter
 
 logger = logging.getLogger(__name__)
 
@@ -73,12 +95,13 @@ class BuffAPI:
                     self.last_request_time = time.time()
                     
                     if response.status == 429:
-                        # 请求过于频繁，等待后重试
+                        # 请求过于频繁，使用指数退避+抖动后重试
                         retry_count += 1
                         if retry_count > max_retries:
                             raise Exception(f"BUFF API 429 错误: 超过最大重试次数 {max_retries}")
-                        logger.warning(f"BUFF API 429 错误，第 {retry_count} 次重试...")
-                        await asyncio.sleep(self.RETRY_DELAY * retry_count)
+                        delay = await _exponential_backoff_with_jitter(retry_count)
+                        logger.warning(f"BUFF API 429 错误，第 {retry_count} 次重试，等待 {delay:.2f} 秒...")
+                        await asyncio.sleep(delay)
                         continue
                     
                     if response.status != 200:
@@ -95,15 +118,17 @@ class BuffAPI:
                 retry_count += 1
                 if retry_count > max_retries:
                     raise Exception(f"BUFF API 请求超时: 超过最大重试次数 {max_retries}")
-                logger.warning(f"BUFF API 请求超时，第 {retry_count} 次重试...")
-                await asyncio.sleep(1)
+                delay = await _exponential_backoff_with_jitter(retry_count)
+                logger.warning(f"BUFF API 请求超时，第 {retry_count} 次重试，等待 {delay:.2f} 秒...")
+                await asyncio.sleep(delay)
                 continue
             except aiohttp.ClientError as e:
                 retry_count += 1
                 if retry_count > max_retries:
                     raise Exception(f"BUFF API 连接错误: {e}")
-                logger.warning(f"BUFF API 连接错误: {e}，第 {retry_count} 次重试...")
-                await asyncio.sleep(1)
+                delay = await _exponential_backoff_with_jitter(retry_count)
+                logger.warning(f"BUFF API 连接错误: {e}，第 {retry_count} 次重试，等待 {delay:.2f} 秒...")
+                await asyncio.sleep(delay)
                 continue
         
         raise Exception("BUFF API 请求失败: 达到最大重试次数")

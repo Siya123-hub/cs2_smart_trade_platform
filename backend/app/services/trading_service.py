@@ -16,6 +16,7 @@ from app.models.inventory import Inventory
 from app.services.buff_service import get_buff_client
 from app.services.steam_service import SteamAPI, get_steam_api
 from app.core.config import settings
+from app.core.response import ServiceResponse, success_response, error_response
 # 导入 validators 中的验证函数
 from app.utils.validators import (
     validate_price as validator_validate_price,
@@ -45,7 +46,7 @@ class TradingEngine:
         self,
         min_profit: float = settings.MIN_PROFIT,
         limit: int = 20
-    ) -> List[Dict[str, Any]]:
+    ) -> ServiceResponse:
         """获取搬砖机会"""
         # 输入验证（使用 validators.py 中的函数）
         validator_validate_min_profit(min_profit)
@@ -82,7 +83,10 @@ class TradingEngine:
         # 按利润排序
         opportunities.sort(key=lambda x: x["profit"], reverse=True)
         
-        return opportunities[:limit]
+        return ServiceResponse.ok(
+            data=opportunities[:limit],
+            message=f"找到 {len(opportunities[:limit])} 个搬砖机会"
+        )
     
     async def execute_buy(
         self,
@@ -121,10 +125,10 @@ class TradingEngine:
         price = float(current_price.get("lowest_price", 0))
         
         if price > max_price:
-            return {
-                "success": False,
-                "message": f"当前价格 {price} 高于最高价格 {max_price}",
-            }
+            return ServiceResponse.err(
+                message=f"当前价格 {price} 高于最高价格 {max_price}",
+                code="PRICE_TOO_HIGH"
+            )
         
         # 创建订单
         try:
@@ -148,19 +152,21 @@ class TradingEngine:
             self.db.add(order)
             await self.db.commit()
             
-            return {
-                "success": True,
-                "order_id": order.order_id,
-                "price": price,
-                "item": item.name,
-            }
+            return ServiceResponse.ok(
+                data={
+                    "order_id": order.order_id,
+                    "price": price,
+                    "item": item.name,
+                },
+                message="买入订单创建成功"
+            )
             
         except Exception as e:
             logger.error(f"买入失败: {e}")
-            return {
-                "success": False,
-                "message": str(e),
-            }
+            return ServiceResponse.err(
+                message=str(e),
+                code="BUY_FAILED"
+            )
     
     async def execute_arbitrage(
         self,
@@ -175,7 +181,7 @@ class TradingEngine:
         # 1. 买入
         buy_result = await self.execute_buy(item_id, max_price=999999)
         
-        if not buy_result["success"]:
+        if not buy_result.success:
             return buy_result
         
         # 2. 等待到账 (实际需要轮询检查)
@@ -184,11 +190,12 @@ class TradingEngine:
         # 3. 卖出 (上架到 Steam 市场)
         # 实际实现需要调用 Steam API
         
-        return {
-            "success": True,
-            "buy_order_id": buy_result.get("order_id"),
-            "message": "搬砖流程已启动",
-        }
+        return ServiceResponse.ok(
+            data={
+                "buy_order_id": buy_result.data.get("order_id") if buy_result.data else None,
+            },
+            message="搬砖流程已启动"
+        )
     
     async def auto_buy_by_monitor(
         self,

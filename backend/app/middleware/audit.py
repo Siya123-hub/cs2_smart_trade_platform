@@ -5,10 +5,14 @@
 import time
 import json
 import logging
+import os
 from typing import Dict, Any, Optional
 from datetime import datetime
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
+
+from cryptography.fernet import Fernet
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -53,14 +57,63 @@ class AuditLogger:
         "DELETE:/api/v1/": {"action": "delete", "level": "warning"},
     }
     
-    def __init__(self, log_sensitive_data: bool = False):
+    def __init__(self, log_sensitive_data: bool = False, encrypt_logs: bool = True):
         self.log_sensitive_data = log_sensitive_data
+        self.encrypt_logs = encrypt_logs
         # 敏感字段不记录
         self.sensitive_fields = {
             "password", "hashed_password", "secret_key", "token",
             "access_token", "refresh_token", "buff_cookie", "ma_file",
             "encryption_key", "api_key", "steam_session"
         }
+        # 加密器
+        self._fernet: Optional[Fernet] = None
+        self._init_encryptor()
+    
+    def _init_encryptor(self):
+        """初始化加密器"""
+        if not self.encrypt_logs:
+            return
+        
+        # 优先使用环境变量中的 ENCRYPTION_KEY
+        encryption_key = settings.ENCRYPTION_KEY if hasattr(settings, 'ENCRYPTION_KEY') else os.getenv("ENCRYPTION_KEY")
+        
+        if encryption_key:
+            try:
+                # 确保 key 是有效的 Fernet key (Base64 编码的 32 字节)
+                if len(encryption_key) == 44 and encryption_key.endswith('='):  # 标准 Fernet key 长度
+                    self._fernet = Fernet(encryption_key.encode() if isinstance(encryption_key, str) else encryption_key)
+                else:
+                    # 如果不是标准 key，尝试使用 base64 编码
+                    import base64
+                    key = base64.urlsafe_b64encode(encryption_key.encode()[:32].ljust(32, b'0'))
+                    self._fernet = Fernet(key)
+                logger.info("审计日志加密器已初始化")
+            except Exception as e:
+                logger.warning(f"审计日志加密器初始化失败: {e}")
+                self._fernet = None
+        else:
+            logger.warning("未配置 ENCRYPTION_KEY，审计日志将使用明文存储")
+    
+    def _encrypt(self, data: str) -> str:
+        """加密数据"""
+        if not self._fernet:
+            return data
+        try:
+            return self._fernet.encrypt(data.encode()).decode()
+        except Exception as e:
+            logger.warning(f"数据加密失败: {e}")
+            return data
+    
+    def _decrypt(self, data: str) -> str:
+        """解密数据"""
+        if not self._fernet:
+            return data
+        try:
+            return self._fernet.decrypt(data.encode()).decode()
+        except Exception as e:
+            logger.warning(f"数据解密失败: {e}")
+            return data
     
     def _get_client_info(self, request: Request) -> Dict[str, str]:
         """获取客户端信息"""
@@ -133,9 +186,18 @@ class AuditLogger:
         if response_status >= 400 and response_body:
             audit_entry["response"] = response_body
         
+        # 序列化为 JSON 字符串 = json.dumps(a
+        log_dataudit_entry, ensure_ascii=False)
+        
+        # 如果启用了加密，则加密日志
+        if self.encrypt_logs and self._fernet:
+            log_data = self._encrypt(log_data)
+            # 添加加密标志
+            audit_entry["encrypted"] = True
+        
         # 记录日志
         log_func = getattr(logger, audit_config["level"], logger.info)
-        log_func(f"AUDIT: {audit_entry['action']} - {json.dumps(audit_entry, ensure_ascii=False)}")
+        log_func(f"AUDIT: {audit_entry['action']} - {log_data}")
 
 
 # 全局审计日志器
