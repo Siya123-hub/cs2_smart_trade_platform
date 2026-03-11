@@ -228,10 +228,10 @@ async def audit_middleware(request: Request, call_next):
                 # 尝试解析 JSON
                 try:
                     request_body = json.loads(body.decode())
-                except:
-                    pass
-        except:
-            pass
+                except Exception as e:
+                    logger.debug(f"请求体JSON解析失败: {e}")
+        except Exception as e:
+            logger.debug(f"请求体读取失败: {e}")
     
     # 处理请求
     response = await call_next(request)

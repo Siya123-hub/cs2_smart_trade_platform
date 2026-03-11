@@ -1,5 +1,6 @@
 // API 统一配置
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios'
+import axiosRetry from 'axios-retry'
 import { useUserStore } from '@/stores/user'
 
 // 创建 axios 实例
@@ -8,6 +9,25 @@ const apiClient: AxiosInstance = axios.create({
   timeout: 30000,
   headers: {
     'Content-Type': 'application/json'
+  }
+})
+
+// 配置 axios-retry 重试机制
+axiosRetry(apiClient, {
+  retries: 3,                          // 重试次数
+  retryDelay: (retryCount) => {
+    return retryCount * 1000           // 重试延迟：1s, 2s, 3s
+  },
+  retryCondition: (error) => {
+    // 仅在这些错误时重试
+    return (
+      error.code === 'ECONNABORTED' ||                 // 请求超时
+      error.response?.status === 429 ||                // 请求过于频繁
+      error.response?.status === 500 ||                // 服务器内部错误
+      error.response?.status === 502 ||                // 网关错误
+      error.response?.status === 503 ||                // 服务不可用
+      error.response?.status === 504                    // 网关超时
+    )
   }
 })
 
@@ -32,12 +52,36 @@ apiClient.interceptors.response.use(
   },
   async (error) => {
     const userStore = useUserStore()
+    const status = error.response?.status
     
-    if (error.response?.status === 401) {
+    if (status === 401) {
       // Token 过期，清除并跳转登录
       userStore.logout()
       window.location.href = '/login'
+      return Promise.reject(error)
     }
+    
+    // 错误信息处理
+    let errorMessage = '请求失败'
+    
+    if (status === 429) {
+      errorMessage = '请求过于频繁，请稍后重试'
+    } else if (status === 500) {
+      errorMessage = '服务器内部错误'
+    } else if (status === 502) {
+      errorMessage = '网关错误'
+    } else if (status === 503) {
+      errorMessage = '服务暂时不可用'
+    } else if (status === 504) {
+      errorMessage = '网关超时，请稍后重试'
+    } else if (error.code === 'ECONNABORTED') {
+      errorMessage = '请求超时'
+    } else if (!error.response) {
+      errorMessage = '网络连接失败'
+    }
+    
+    // 将错误信息附加到 error 对象
+    error.userMessage = errorMessage
     
     return Promise.reject(error)
   }

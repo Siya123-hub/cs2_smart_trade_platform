@@ -56,6 +56,7 @@ class Token(BaseModel):
     """令牌"""
     access_token: str
     token_type: str = "bearer"
+    refresh_token: Optional[str] = None
 
 
 class TokenData(BaseModel):

@@ -90,7 +90,7 @@
           </div>
         </el-header>
         
-        <el-main>
+        <el-main v-loading="loading" element-loading-text="加载中..." element-loading-background="rgba(255, 255, 255, 0.8)">
           <router-view />
         </el-main>
       </el-container>
@@ -114,6 +114,20 @@ const activeMenu = computed(() => route.path)
 const drawerVisible = ref(false)
 const isCollapsed = ref(false)
 const isMobile = ref(false)
+const loading = ref(false)
+
+// 路由切换时显示loading
+router.beforeEach((to, from, next) => {
+  loading.value = true
+  next()
+})
+
+router.afterEach(() => {
+  setTimeout(() => {
+    loading.value = false
+  }, 300) // 短暂延迟让内容渲染完成
+})
+const loading = ref(false)
 
 const checkMobile = () => {
   isMobile.value = window.innerWidth < 768

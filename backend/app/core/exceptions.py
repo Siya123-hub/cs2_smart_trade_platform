@@ -6,6 +6,7 @@ from typing import Optional, Dict, Any
 from fastapi import HTTPException, status
 from fastapi.responses import JSONResponse
 from fastapi import Request
+from fastapi.exceptions import RequestValidationError
 import logging
 import traceback
 
@@ -200,9 +201,43 @@ async def generic_error_handler(request: Request, exc: Exception) -> JSONRespons
     )
 
 
+async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """
+    请求验证错误处理器 - 处理 Pydantic 验证错误
+    """
+    error_response = {
+        "error": {
+            "code": "VALIDATION_ERROR",
+            "message": "请求参数验证失败",
+            "details": exc.errors(),
+            "path": str(request.url.path),
+        }
+    }
+    
+    logger.warning(
+        f"Validation Error: {exc.errors()}",
+        extra={
+            "context": {
+                "path": str(request.url.path),
+                "method": request.method,
+                "errors": exc.errors()
+            }
+        }
+    )
+    
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content=error_response
+    )
+
+
 def register_error_handlers(app) -> None:
     """注册错误处理器到应用"""
     from fastapi import FastAPI
+    from fastapi.exceptions import RequestValidationError
+    
+    # 注册验证错误处理器
+    app.add_exception_handler(RequestValidationError, validation_exception_handler)
     
     # 注册API错误处理器
     app.add_exception_handler(APIError, api_error_handler)

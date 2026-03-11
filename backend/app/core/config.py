@@ -36,6 +36,9 @@ class Settings(BaseSettings):
 
     # Steam 配置
     STEAM_API_KEY: Optional[str] = None
+    STEAM_LOGIN: Optional[str] = Field(default=None, description="Steam 登录用户名")
+    STEAM_SESSION_TOKEN: Optional[str] = Field(default=None, description="Steam 会话令牌")
+    STEAM_WEBCOOKIE: Optional[str] = Field(default=None, description="Steam Web Cookie")
 
     # BUFF 配置
     BUFF_BASE_URL: str = "https://buff.163.com"

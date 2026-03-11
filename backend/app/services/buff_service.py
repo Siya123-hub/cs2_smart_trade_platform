@@ -49,6 +49,8 @@ async def _exponential_backoff_with_jitter(
 logger = logging.getLogger(__name__)
 
 
+from aiohttp import TCPConnector
+
 class BuffAPI:
     """BUFF API 客户端"""
     
@@ -59,7 +61,17 @@ class BuffAPI:
     
     def __init__(self, cookie: Optional[str] = None, timeout: Optional[aiohttp.ClientTimeout] = None):
         self.base_url = settings.BUFF_BASE_URL
-        self.session = aiohttp.ClientSession(timeout=timeout or self.DEFAULT_TIMEOUT)
+        # 配置连接池
+        connector = TCPConnector(
+            limit=10,                    # 连接池最大连接数
+            limit_per_host=5,            # 单主机最大连接数
+            ttl_dns_cache=300,          # DNS缓存TTL（秒）
+            enable_cleanup_closed=True   # 清理已关闭的连接
+        )
+        self.session = aiohttp.ClientSession(
+            timeout=timeout or self.DEFAULT_TIMEOUT,
+            connector=connector
+        )
         self.cookie = cookie
         self.last_request_time = 0
         self.min_interval = settings.BUFF_API_INTERVAL

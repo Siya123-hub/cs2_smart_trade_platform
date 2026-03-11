@@ -4,7 +4,7 @@ Steam 市场端点
 处理 Steam 市场的挂单操作
 """
 import logging
-from typing import Optional
+from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
@@ -65,7 +65,7 @@ class MyListingItem(BaseModel):
 class MyListingsResponse(BaseModel):
     """我的挂单列表响应"""
     success: bool
-    listings: list[MyListingItem]
+    listings: List[MyListingItem]
     total: int
 
 

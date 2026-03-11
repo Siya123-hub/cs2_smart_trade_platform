@@ -279,3 +279,15 @@ async def health_check_v2():
         "version": "v2",
         "timestamp": datetime.utcnow().isoformat()
     }
+
+
+# 挂载 WebSocket 端点
+from app.api.v2 import websocket as ws_router
+from app.api.v2.endpoints import auth, bots, monitors, inventory, notifications
+
+router.include_router(ws_router.router, tags=["websocket"])
+router.include_router(auth.router, prefix="/auth", tags=["v2-auth"])
+router.include_router(bots.router, prefix="/bots", tags=["v2-bots"])
+router.include_router(monitors.router, prefix="/monitors", tags=["v2-monitors"])
+router.include_router(inventory.router, prefix="/inventory", tags=["v2-inventory"])
+router.include_router(notifications.router, prefix="/notifications", tags=["v2-notifications"])

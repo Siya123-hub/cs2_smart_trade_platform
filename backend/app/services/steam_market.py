@@ -120,9 +120,9 @@ class SteamMarketService:
                 # 尝试解析 JSON，失败则返回文本
                 try:
                     result = await response.json()
-                except:
+                except Exception as e:
                     text = await response.text()
-                    logger.warning(f"Steam Market API 返回非JSON: {text[:200]}")
+                    logger.warning(f"Steam Market API 返回非JSON: {text[:200]}, 解析错误: {e}")
                     result = {"raw": text}
                 
                 # 检查 Steam 错误
@@ -161,7 +161,7 @@ class SteamMarketService:
         if not self.session_token and not self.webcookie:
             raise SteamMarketAuthError("需要 Steam 会话令牌或 Web Cookie")
         
-        url = f"{self.BASE_URL}/getmy listings{self.API_VERSION}/"
+        url = f"{self.BASE_URL}/getmylistings{self.API_VERSION}/"
         
         params = {
             "appid": app_id,
