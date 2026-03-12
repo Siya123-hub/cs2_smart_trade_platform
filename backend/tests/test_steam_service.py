@@ -158,7 +158,9 @@ class TestSteamAPI:
         
         api.session.get = lambda *args, **kwargs: MockErrorContext()
 
-        with pytest.raises(aiohttp.ClientError):
+        # 代码会捕获aiohttp.ClientError并重新抛出SteamAPIError
+        from app.services.steam_service import SteamAPIError
+        with pytest.raises(SteamAPIError):
             await api._request("https://api.test.com/test")
 
         await api.close()
