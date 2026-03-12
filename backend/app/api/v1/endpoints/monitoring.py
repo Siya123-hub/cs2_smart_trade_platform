@@ -45,6 +45,12 @@ _alert_config = AlertConfig()
 
 
 def get_alert_config() -> AlertConfig:
+    """
+    获取告警配置
+    
+    Returns:
+        AlertConfig: 当前告警配置
+    """
     return _alert_config
 
 
