@@ -27,8 +27,8 @@ class Order(Base):
     price = Column(Numeric(12, 2), nullable=False)
     quantity = Column(Integer, default=1)
     
-    # 状态: pending(待执行)/pending_confirm(待确认)/completed(已完成)/cancelled(已取消)/failed(失败)
-    status = Column(String(20), default='pending', index=True)
+    # 状态
+    status = Column(String(20), default='pending', index=True)  # pending/completed/cancelled/failed
     
     # 来源
     source = Column(String(20), nullable=False)  # 'steam' / 'buff' / 'manual'

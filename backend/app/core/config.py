@@ -49,11 +49,6 @@ class Settings(BaseSettings):
     MIN_PROFIT: float = 1.0  # 最小利润（元）
     MAX_SINGLE_TRADE: float = 10000  # 单笔最大交易金额
     AUTO_CONFIRM: bool = True
-    
-    # 订单交易限额配置（统一管理）
-    MAX_SINGLE_ORDER: float = Field(default=10000.0, description="单笔订单最大金额")
-    MAX_DAILY_LIMIT: float = Field(default=50000.0, description="每日累计最大交易金额")
-    MAX_ORDER_RETRIES: int = Field(default=3, description="订单异步确认最大重试次数")
 
     # 监控配置
     PRICE_UPDATE_INTERVAL_HIGH: int = 5    # 热门饰品 5秒
@@ -63,12 +58,6 @@ class Settings(BaseSettings):
     # 登录限制配置
     LOGIN_MAX_ATTEMPTS: int = 5  # 最大登录尝试次数
     LOGIN_LOCKOUT_MINUTES: int = 15  # 锁定时间（分钟）
-    
-    # WebSocket 心跳配置（统一管理）
-    WS_HEARTBEAT_INTERVAL: int = Field(default=30, description="WebSocket 心跳间隔(秒)")
-    WS_HEARTBEAT_TIMEOUT: int = Field(default=10, description="WebSocket 心跳超时(秒)")
-    WS_MAX_FAILURES: int = Field(default=3, description="WebSocket 最大连续心跳失败次数")
-    WS_RECONNECT_DELAY: int = Field(default=5, description="WebSocket 重连延迟(秒)")
 
     # Rate Limiting 配置
     RATE_LIMIT_ENABLED: bool = Field(default=True)  # 是否启用限流
