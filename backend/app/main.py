@@ -4,11 +4,13 @@ CS2 智能交易平台 - 后端入口
 """
 from contextlib import asynccontextmanager
 import json
+import threading
 from typing import Optional
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+from functools import wraps
 
 from app.core.config import settings
 from app.core.database import engine, Base
@@ -26,22 +28,44 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# 全局 SteamAPI 实例
+# 全局 SteamAPI 实例（线程安全）
 _steam_api: Optional[SteamAPI] = None
+_steam_api_lock = threading.Lock()
+
+# 缓存降级状态
+_cache_degraded = False
 
 
 def get_steam_api() -> SteamAPI:
-    """获取全局 SteamAPI 实例"""
+    """获取全局 SteamAPI 实例（线程安全懒加载）"""
     global _steam_api
     if _steam_api is None:
-        _steam_api = SteamAPI()
+        with _steam_api_lock:
+            if _steam_api is None:
+                _steam_api = SteamAPI()
     return _steam_api
+
+
+def cache_fallback(func):
+    """缓存降级装饰器：当缓存不可用时优雅降级"""
+    @wraps(func)
+    async def wrapper(*args, **kwargs):
+        global _cache_degraded
+        try:
+            return await func(*args, **kwargs)
+        except Exception as e:
+            # 记录错误但不让服务崩溃
+            logger.error(f"Cache operation failed: {e}")
+            _cache_degraded = True
+            # 返回 None 让调用方使用默认值
+            return None
+    return wrapper
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
-    global _steam_api
+    global _steam_api, _cache_degraded
     
     # 初始化日志配置
     init_logging(log_file="logs/app.log")
@@ -49,13 +73,15 @@ async def lifespan(app: FastAPI):
     # 启动时初始化加密模块
     encryption_manager.initialize()
     
-    # 启动时初始化缓存服务
+    # 启动时初始化缓存服务（带完整降级）
     try:
         cache = get_cache()
         await cache.initialize()
         logger.info("Cache service initialized")
     except Exception as e:
         logger.warning(f"Failed to initialize cache service: {e}")
+        _cache_degraded = True
+        logger.warning("Cache service degraded - using fallback mode")
     
     # 启动时创建数据库表
     async with engine.begin() as conn:
@@ -160,25 +186,31 @@ def create_app() -> FastAPI:
     @app.get("/health/ready")
     async def readiness_check():
         """就绪检查 - 检查所有依赖服务"""
+        global _cache_degraded
         checks = {}
         
-        # 检查数据库
+        # 检查数据库（使用参数化查询防止SQL注入）
         try:
             from app.core.database import engine
+            from sqlalchemy import text
             async with engine.connect() as conn:
-                await conn.execute("SELECT 1")
+                await conn.execute(text("SELECT 1"))
             checks["database"] = "healthy"
         except Exception as e:
             checks["database"] = f"unhealthy: {str(e)}"
         
-        # 检查 Redis
+        # 检查 Redis/缓存
         try:
             from app.core.redis_manager import get_redis
             redis_client = await get_redis()
             await redis_client.ping()
-            checks["redis"] = "healthy"
+            checks["cache"] = "healthy"
         except Exception as e:
-            checks["redis"] = f"unhealthy: {str(e)}"
+            # 缓存降级不影响整体可用性
+            if _cache_degraded:
+                checks["cache"] = f"degraded: {str(e)}"
+            else:
+                checks["cache"] = f"unhealthy: {str(e)}"
         
         # 检查 Steam API
         try:
@@ -190,12 +222,17 @@ def create_app() -> FastAPI:
         except Exception as e:
             checks["steam_api"] = f"unhealthy: {str(e)}"
         
-        # 判断整体状态
-        all_healthy = all(v == "healthy" for v in checks.values())
+        # 判断整体状态（缓存降级不影响就绪状态）
+        critical_checks = ["database", "steam_api"]
+        all_critical_healthy = all(
+            checks.get(k, "").startswith("healthy") 
+            for k in critical_checks
+        )
         
         return {
-            "status": "ready" if all_healthy else "not_ready",
-            "checks": checks
+            "status": "ready" if all_critical_healthy else "not_ready",
+            "checks": checks,
+            "cache_degraded": _cache_degraded
         }
 
     return app

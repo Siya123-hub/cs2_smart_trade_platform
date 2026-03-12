@@ -120,9 +120,11 @@ async def check_idempotency(key: str) -> Tuple[bool, Optional[dict]]:
                     logger.warning(f"Failed to delete idempotency lock: {e}")
         else:
             # 获取锁失败，说明有并发请求正在处理
-            # 等待一段时间后检查是否有缓存的响应
-            for _ in range(10):  # 最多等待 5 秒
-                await asyncio.sleep(0.5)
+            # 使用指数退避等待缓存的响应
+            # 初始等待 0.1s，最大等待 5s，最多 8 次重试
+            wait_times = [0.1, 0.2, 0.4, 0.8, 1.6, 3.2, 2.5, 1.5]  # 累加约 10s
+            for wait_time in wait_times:
+                await asyncio.sleep(wait_time)
                 cached_response = await redis_client.get(key)
                 if cached_response:
                     return True, json.loads(cached_response)

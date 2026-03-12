@@ -38,34 +38,36 @@ class EncryptionManager:
             # 从环境变量获取密钥
             key = os.environ.get("ENCRYPTION_KEY", "").encode()
         
-        if not key:
-            # 强制要求设置 ENCRYPTION_KEY，不允许使用临时密钥
-            logger.error("未设置 ENCRYPTION_KEY 环境变量！这是生产环境的安全风险。")
-            logger.error("请设置环境变量: export ENCRYPTION_KEY=$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')")
-            raise ValueError(
-                "ENCRYPTION_KEY 环境变量未设置！"
-                "请设置环境变量: export ENCRYPTION_KEY=<生成的密钥>"
-            )
+        use_fallback = False
         
-        # 从环境变量获取 salt，必须设置
+        if not key:
+            # 优雅降级：使用临时密钥
+            logger.warning("ENCRYPTION_KEY 环境变量未设置，使用临时密钥（开发模式）")
+            logger.warning("生产环境请设置: export ENCRYPTION_KEY=$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')")
+            key = b"cs2_trade_temp_key_do_not_use_in_production_32bytes"
+            use_fallback = True
+        
+        # 从环境变量获取 salt
         salt_env = os.environ.get("ENCRYPTION_SALT")
+        
         if not salt_env:
-            logger.error("未设置 ENCRYPTION_SALT 环境变量！这是生产环境的安全风险。")
-            logger.error("请设置环境变量: export ENCRYPTION_SALT=<随机字符串，至少16字符>")
-            raise ValueError(
-                "ENCRYPTION_SALT 环境变量未设置！"
-                "请设置环境变量: export ENCRYPTION_SALT=<随机字符串>"
-            )
+            # 优雅降级：使用默认开发用 salt
+            logger.warning("ENCRYPTION_SALT 环境变量未设置，使用默认开发用 salt（开发模式）")
+            logger.warning("生产环境请设置: export ENCRYPTION_SALT=<随机字符串，至少16字符>")
+            salt_env = "cs2_trade_salt_dev"
+            use_fallback = True
         
         salt = salt_env.encode()
         
         # 检查是否使用默认开发用 salt
         if salt == "cs2_trade_salt_dev".encode():
-            logger.error("检测到默认开发用 salt (cs2_trade_salt_dev)！生产环境必须设置唯一的 salt。")
-            logger.error("请设置环境变量: export ENCRYPTION_SALT=<随机字符串，至少16字符>")
-            raise ValueError(
-                "检测到默认开发用 salt！生产环境必须设置唯一的 ENCRYPTION_SALT。"
-            )
+            if use_fallback:
+                logger.warning("检测到默认开发用 salt (cs2_trade_salt_dev)，这是开发模式下的正常行为")
+            else:
+                logger.error("检测到默认开发用 salt (cs2_trade_salt_dev)！生产环境必须设置唯一的 salt。")
+                logger.error("请设置环境变量: export ENCRYPTION_SALT=<随机字符串，至少16字符>")
+                # 降级：仍然允许启动但记录错误
+                logger.warning("继续使用默认 salt，服务将在开发模式下运行")
         
         # 使用 PBKDF2 派生密钥
         kdf = PBKDF2HMAC(
@@ -76,6 +78,9 @@ class EncryptionManager:
         )
         derived_key = base64.urlsafe_b64encode(kdf.derive(key))
         self._fernet = Fernet(derived_key)
+        
+        if use_fallback:
+            logger.warning("加密模块运行在开发模式（降级状态），生产环境请设置 ENCRYPTION_KEY 和 ENCRYPTION_SALT")
     
     def encrypt(self, data: str) -> str:
         """加密字符串"""

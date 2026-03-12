@@ -37,6 +37,14 @@ from app.schemas.user import (
 
 logger = logging.getLogger(__name__)
 
+
+def mask_username(username: str) -> str:
+    """脱敏用户名用于日志记录"""
+    if not username or len(username) <= 2:
+        return "*" * 3
+    return username[0] + "*" * (len(username) - 2) + username[-1]
+
+
 router = APIRouter()
 
 # Redis 键前缀
@@ -132,7 +140,7 @@ async def login(
     user = result.scalar_one_or_none()
     
     if not user or not verify_password(form_data.password, user.hashed_password):
-        logger.warning(f"登录失败: {username}")
+        logger.warning(f"登录失败: {mask_username(username)}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="用户名或密码错误",
@@ -158,7 +166,7 @@ async def login(
         expires_delta=refresh_token_expires
     )
     
-    logger.info(f"用户登录成功: {username}")
+    logger.info(f"用户登录成功: {mask_username(username)}")
     
     return {
         "access_token": access_token, 
@@ -291,6 +299,6 @@ async def change_password(
     current_user.hashed_password = get_password_hash(new_password)
     await db.commit()
     
-    logger.info(f"用户 {current_user.username} 修改了密码")
+    logger.info(f"用户 {mask_username(current_user.username)} 修改了密码")
     
     return {"message": "密码修改成功，请重新登录"}

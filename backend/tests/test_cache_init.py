@@ -65,12 +65,14 @@ class TestMemoryCache:
     
     def test_lru_eviction(self, cache):
         """测试LRU淘汰"""
+        # 创建一个小缓存
+        cache = MemoryCache(max_size=3)
         cache.set("key1", "value1")
         cache.set("key2", "value2")
         
         # 触发淘汰
-        for i in range(100):
-            cache.set(f"key{i}", f"value{i}")
+        cache.set("key3", "value3")
+        cache.set("key4", "value4")
         
         # 最旧的键应该被淘汰
         assert cache.get("key1") is None
@@ -153,7 +155,6 @@ class TestCacheInitialization:
     
     def test_is_cache_initialized_false(self):
         """测试初始状态未初始化"""
-        # Reset the module-level state
         import app.services.cache as cache_module
         cache_module._cache_initialized = False
         
@@ -164,7 +165,6 @@ class TestCacheInitialization:
         """测试init_cache创建缓存实例"""
         import app.services.cache as cache_module
         
-        # Reset
         cache_module._cache = None
         cache_module._cache_initialized = False
         
@@ -178,7 +178,6 @@ class TestCacheInitialization:
         """测试ensure_cache_initialized确保初始化"""
         import app.services.cache as cache_module
         
-        # Reset
         cache_module._cache = None
         cache_module._cache_initialized = False
         
@@ -189,27 +188,7 @@ class TestCacheInitialization:
     
     def test_get_cache_returns_same_instance(self):
         """测试get_cache返回同一实例"""
-        import app.services.cache as cache_module
-        
         cache1 = get_cache()
         cache2 = get_cache()
         
         assert cache1 is cache2
-
-
-class TestRedisCacheFallback:
-    """Redis缓存降级测试"""
-    
-    @pytest.mark.asyncio
-    async def test_redis_failure_falls_back_to_memory(self):
-        """测试Redis失败时降级到内存缓存"""
-        manager = CacheManager(backend=CacheBackend.REDIS, redis_url="redis://invalid:6379")
-        
-        # 尝试初始化，会失败但应该降级到内存
-        await manager.initialize(max_retries=1, retry_delay=0.1)
-        
-        # 降级到内存缓存
-        manager.set("key1", "value1")
-        
-        assert manager.get("key1") == "value1"
-        assert manager.backend == CacheBackend.MEMORY

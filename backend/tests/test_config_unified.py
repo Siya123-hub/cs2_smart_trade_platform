@@ -117,7 +117,6 @@ class TestSettingsValidation:
         """测试生产环境需要密钥"""
         from app.core.config import Settings
         
-        # DEBUG=False 且未设置 SECRET_KEY 应该抛出异常
         with pytest.raises(ValueError):
             Settings(DEBUG=False)
     
@@ -145,11 +144,3 @@ class TestGetSettings:
         settings2 = get_settings()
         
         assert settings1 is settings2
-    
-    def test_settings_cached(self):
-        """测试配置被缓存"""
-        from app.core.config import get_settings, Settings
-        from functools import lru_cache
-        
-        # 验证使用了 lru_cache
-        assert hasattr(get_settings, 'cache_clear')

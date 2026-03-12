@@ -40,6 +40,14 @@ from app.schemas.user import (
 
 logger = logging.getLogger(__name__)
 
+
+def mask_username(username: str) -> str:
+    """脱敏用户名用于日志记录"""
+    if not username or len(username) <= 2:
+        return "*" * 3
+    return username[0] + "*" * (len(username) - 2) + username[-1]
+
+
 router = APIRouter()
 
 # Redis 键前缀
@@ -303,7 +311,7 @@ async def login(
     if not user or not verify_password(form_data.password, user.hashed_password):
         # 记录失败的登录尝试
         await _record_login_attempt(username)
-        logger.warning(f"登录失败: {username}")
+        logger.warning(f"登录失败: {mask_username(username)}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="用户名或密码错误",
@@ -328,7 +336,7 @@ async def login(
         expires_delta=access_token_expires
     )
     
-    logger.info(f"用户登录成功: {username}")
+    logger.info(f"用户登录成功: {mask_username(username)}")
     
     return {"access_token": access_token, "token_type": "bearer"}
 
