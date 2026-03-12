@@ -21,13 +21,16 @@ from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware, ConnectionLimitMiddleware
 from app.middleware.audit import audit_middleware
 from app.services.steam_service import SteamAPI
-from app.services.cache import get_cache
+from app.services.cache import get_cache, is_cache_initialized, ensure_cache_initialized
 import logging
 
 logger = logging.getLogger(__name__)
 
 # 全局 SteamAPI 实例
 _steam_api: Optional[SteamAPI] = None
+
+# 应用就绪状态标志
+_app_ready = False
 
 
 def get_steam_api() -> SteamAPI:
@@ -41,7 +44,7 @@ def get_steam_api() -> SteamAPI:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
-    global _steam_api
+    global _steam_api, _app_ready
     
     # 初始化日志配置
     init_logging(log_file="logs/app.log")
@@ -49,13 +52,14 @@ async def lifespan(app: FastAPI):
     # 启动时初始化加密模块
     encryption_manager.initialize()
     
-    # 启动时初始化缓存服务
+    # 启动时初始化缓存服务 (确保初始化完成后再接受请求)
     try:
         cache = get_cache()
         await cache.initialize()
-        logger.info("Cache service initialized")
+        logger.info("Cache service initialized successfully")
     except Exception as e:
         logger.warning(f"Failed to initialize cache service: {e}")
+        # 降级到内存缓存，不阻止应用启动
     
     # 启动时创建数据库表
     async with engine.begin() as conn:
@@ -65,7 +69,15 @@ async def lifespan(app: FastAPI):
     _steam_api = SteamAPI()
     logger.info("SteamAPI initialized")
     
+    # 标记应用已就绪，可以接受请求
+    _app_ready = True
+    logger.info("Application is ready to accept requests")
+    
     yield
+    
+    # 关闭时先标记应用为未就绪
+    _app_ready = False
+    logger.info("Application shutting down")
     
     # 关闭时清理 SteamAPI 资源
     if _steam_api:
@@ -145,7 +157,8 @@ def create_app() -> FastAPI:
             db_version = redis_version = aiohttp_version = "unknown"
         
         return {
-            "status": "healthy",
+            "status": "healthy" if _app_ready else "starting",
+            "ready": _app_ready,
             "system": {
                 "platform": platform.platform(),
                 "python_version": sys.version,
@@ -160,7 +173,17 @@ def create_app() -> FastAPI:
     @app.get("/health/ready")
     async def readiness_check():
         """就绪检查 - 检查所有依赖服务"""
+        global _app_ready
         checks = {}
+        
+        # 检查应用启动状态
+        if not _app_ready:
+            return {
+                "status": "starting",
+                "message": "Application is still starting up",
+                "ready": False,
+                "checks": {}
+            }
         
         # 检查数据库
         try:

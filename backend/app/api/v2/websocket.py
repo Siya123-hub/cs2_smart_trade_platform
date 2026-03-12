@@ -92,15 +92,54 @@ class WebSocketAuthManager:
 class ConnectionManager:
     """WebSocket连接管理器"""
     
-    # 心跳配置
-    HEARTBEAT_INTERVAL = 30  # 心跳间隔(秒)
-    HEARTBEAT_TIMEOUT = 10   # 心跳超时(秒)
+    # 心跳配置 - 从 settings 读取或使用默认值
+    _config_loaded = False
+    
+    @classmethod
+    def _ensure_config_loaded(cls):
+        """确保配置已加载"""
+        if not cls._config_loaded:
+            try:
+                from app.core.config import settings
+                cls.HEARTBEAT_INTERVAL = settings.WS_HEARTBEAT_INTERVAL
+                cls.HEARTBEAT_TIMEOUT = settings.WS_HEARTBEAT_TIMEOUT
+                cls.MAX_FAILURES = settings.WS_MAX_FAILURES
+                cls.RECONNECT_DELAY = settings.WS_RECONNECT_DELAY
+                cls._config_loaded = True
+            except Exception:
+                # 使用默认值
+                cls.HEARTBEAT_INTERVAL = 30
+                cls.HEARTBEAT_TIMEOUT = 10
+                cls.MAX_FAILURES = 3
+                cls.RECONNECT_DELAY = 5
+    
+    @classmethod
+    def get_heartbeat_config(cls) -> dict:
+        """获取心跳配置（从 settings 读取）"""
+        cls._ensure_config_loaded()
+        return {
+            "interval": cls.HEARTBEAT_INTERVAL,
+            "timeout": cls.HEARTBEAT_TIMEOUT,
+            "max_failures": cls.MAX_FAILURES,
+            "reconnect_delay": cls.RECONNECT_DELAY
+        }
+    
+    @classmethod
+    def update_heartbeat_config(cls, **kwargs):
+        """更新心跳配置"""
+        cls._ensure_config_loaded()
+        for key, value in kwargs.items():
+            if hasattr(cls, key.upper()):
+                setattr(cls, key.upper(), value)
     
     @staticmethod
     async def keep_alive(websocket: WebSocket, user_id: int):
         """保持连接活跃 - 发送ping，正确处理pong响应"""
+        # 确保配置已加载
+        ConnectionManager._ensure_config_loaded()
+        
         consecutive_failures = 0
-        max_failures = 3  # 连续3次心跳超时则断开连接
+        max_failures = ConnectionManager.MAX_FAILURES  # 连续多次心跳超时则断开连接
         
         try:
             while True:
@@ -134,6 +173,10 @@ class ConnectionManager:
                             await websocket.close(code=4002, reason="Heartbeat timeout")
                         except Exception:
                             pass
+                        
+                        # 通知客户端需要重连
+                        logger.info(f"Scheduling reconnect for user {user_id}")
+                        asyncio.create_task(ConnectionManager._schedule_reconnect(user_id))
                         break
                     # 单次超时，继续等待
                     
@@ -141,6 +184,23 @@ class ConnectionManager:
             logger.error(f"Keep-alive error for user {user_id}: {e}")
             # 确保清理连接
             ConnectionManager._cleanup_user_connection(user_id)
+            # 安排重连
+            asyncio.create_task(ConnectionManager._schedule_reconnect(user_id))
+    
+    @staticmethod
+    async def _schedule_reconnect(user_id: int):
+        """安排重连（通知客户端重连）"""
+        delay = ConnectionManager.RECONNECT_DELAY
+        logger.info(f"Scheduling reconnect for user {user_id} in {delay}s")
+        
+        await asyncio.sleep(delay)
+        
+        # 可以在这里触发通知服务发送重连提醒
+        # 这里只记录日志，实际重连由客户端发起
+        logger.info(f"Reconnect window opened for user {user_id}")
+        
+        # 可以通过其他方式通知客户端，例如：
+        # await notification_service.send_notification(...)
     
     @staticmethod
     def _cleanup_user_connection(user_id: int):

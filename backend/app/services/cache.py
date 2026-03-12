@@ -795,6 +795,15 @@ class CacheManager:
 # 全局缓存实例
 _cache: Optional[CacheManager] = None
 _cache_initialized: bool = False  # 添加初始化标记
+_init_lock: asyncio.Lock = None  # 初始化锁，防止竞态条件
+
+
+def _get_init_lock() -> asyncio.Lock:
+    """获取或创建初始化锁"""
+    global _init_lock
+    if _init_lock is None:
+        _init_lock = asyncio.Lock()
+    return _init_lock
 
 
 async def init_cache() -> CacheManager:
@@ -819,13 +828,21 @@ async def init_cache() -> CacheManager:
             redis_url=settings.REDIS_URL if hasattr(settings, 'REDIS_URL') else None
         )
     
-    # 执行初始化
-    try:
-        await _cache.initialize()
-        _cache_initialized = True
-        logger.info("Cache initialized successfully")
-    except Exception as e:
-        logger.warning(f"Cache initialization failed: {e}")
+    # 使用锁确保初始化线程安全，防止竞态条件
+    init_lock = _get_init_lock()
+    async with init_lock:
+        # 双重检查：获取锁后再次检查是否已初始化
+        global _cache_initialized
+        if _cache_initialized:
+            return _cache
+        
+        # 执行初始化
+        try:
+            await _cache.initialize()
+            _cache_initialized = True
+            logger.info("Cache initialized successfully")
+        except Exception as e:
+            logger.warning(f"Cache initialization failed: {e}")
     
     return _cache
 
@@ -836,8 +853,11 @@ def get_cache() -> CacheManager:
     
     注意：此函数返回缓存管理器，但 Redis 后端可能未初始化。
     如需确保初始化完成，请先调用 init_cache()
+    
+    返回值包含 _initialized 属性，标识缓存是否已完全初始化
     """
-    global _cache
+    global _cache, _cache_initialized
+    
     if _cache is None:
         # 从配置读取
         from app.core.config import settings
@@ -850,10 +870,15 @@ def get_cache() -> CacheManager:
             backend=backend,
             redis_url=settings.REDIS_URL if hasattr(settings, 'REDIS_URL') else None
         )
-        # 不再自动调用 initialize()，避免异步上下文问题
-        # 由外部应用启动时调用 init_cache()
+        # 添加初始化状态属性
+        _cache._initialized = _cache_initialized
     
     return _cache
+
+
+def is_cache_initialized() -> bool:
+    """检查缓存是否已完全初始化"""
+    return _cache_initialized
 
 
 async def ensure_cache_initialized() -> CacheManager:
@@ -874,50 +899,78 @@ async def ensure_cache_initialized() -> CacheManager:
 # ============ 便捷函数 ============
 
 async def aget(key: str, default: Any = None) -> Any:
-    """异步获取缓存值"""
+    """异步获取缓存值（如果 Redis 未初始化则回退到内存缓存）"""
     cache = get_cache()
+    # 如果 Redis 后端但未初始化，回退到内存缓存
+    if cache.backend == CacheBackend.REDIS and not _cache_initialized:
+        return cache._memory_cache.get(key, default)
     return await cache.aget(key, default)
 
 
 def get(key: str, default: Any = None) -> Any:
-    """获取缓存值"""
+    """获取缓存值（如果 Redis 未初始化则回退到内存缓存）"""
     cache = get_cache()
+    # 如果 Redis 后端但未初始化，回退到内存缓存
+    if cache.backend == CacheBackend.REDIS and not _cache_initialized:
+        return cache._memory_cache.get(key, default)
     return cache.get(key, default)
 
 
 def set(key: str, value: Any, ttl: int = 300) -> None:
-    """设置缓存值"""
+    """设置缓存值（如果 Redis 未初始化则回退到内存缓存）"""
     cache = get_cache()
+    # 如果 Redis 后端但未初始化，回退到内存缓存
+    if cache.backend == CacheBackend.REDIS and not _cache_initialized:
+        cache._memory_cache.set(key, value, ttl)
+        return
     cache.set(key, value, ttl)
 
 
 async def aset(key: str, value: Any, ttl: int = 300) -> None:
-    """异步设置缓存值"""
+    """异步设置缓存值（如果 Redis 未初始化则回退到内存缓存）"""
     cache = get_cache()
+    # 如果 Redis 后端但未初始化，回退到内存缓存
+    if cache.backend == CacheBackend.REDIS and not _cache_initialized:
+        cache._memory_cache.set(key, value, ttl)
+        return
     await cache.aset(key, value, ttl)
 
 
 def delete(key: str) -> bool:
     """删除缓存"""
     cache = get_cache()
+    # 如果 Redis 后端但未初始化，回退到内存缓存
+    if cache.backend == CacheBackend.REDIS and not _cache_initialized:
+        return cache._memory_cache.delete(key)
     return cache.delete(key)
 
 
 async def adelete(key: str) -> bool:
     """异步删除缓存"""
     cache = get_cache()
+    # 如果 Redis 后端但未初始化，回退到内存缓存
+    if cache.backend == CacheBackend.REDIS and not _cache_initialized:
+        return cache._memory_cache.delete(key)
     return await cache.adelete(key)
 
 
 def clear() -> None:
     """清空缓存"""
     cache = get_cache()
+    # 如果 Redis 后端但未初始化，回退到内存缓存
+    if cache.backend == CacheBackend.REDIS and not _cache_initialized:
+        cache._memory_cache.clear()
+        return
     cache.clear()
 
 
 async def aclear() -> None:
     """异步清空缓存"""
     cache = get_cache()
+    # 如果 Redis 后端但未初始化，回退到内存缓存
+    if cache.backend == CacheBackend.REDIS and not _cache_initialized:
+        cache._memory_cache.clear()
+        return
     await cache.aclear()
 
 

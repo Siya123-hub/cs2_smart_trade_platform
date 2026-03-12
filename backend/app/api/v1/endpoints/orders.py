@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.core.exceptions import NotFoundError, BusinessError
+from app.core.config import settings
 from app.core.idempotency import (
     generate_idempotency_key,
     check_idempotency,
@@ -134,11 +135,11 @@ async def create_order(
                 f"余额不足: 当前余额 {user_balance:.2f}，订单金额 {order_total:.2f}"
             )
         
-        # 检查单笔订单限额
-        MAX_SINGLE_ORDER = 10000.0  # 单笔订单最大金额
-        if order_total > MAX_SINGLE_ORDER:
+        # 检查单笔订单限额（从配置读取）
+        max_single_order = settings.MAX_SINGLE_ORDER
+        if order_total > max_single_order:
             raise BusinessError(
-                f"单笔订单金额超限: 最大 {MAX_SINGLE_ORDER:.2f}，订单金额 {order_total:.2f}"
+                f"单笔订单金额超限: 最大 {max_single_order:.2f}，订单金额 {order_total:.2f}"
             )
         
         # 检查日累计限额
@@ -159,10 +160,11 @@ async def create_order(
         if isinstance(daily_total, str):
             daily_total = float(daily_total)
         
-        MAX_DAILY_LIMIT = 50000.0  # 每日累计最大交易金额
-        if daily_total + order_total > MAX_DAILY_LIMIT:
+        # 从配置读取每日限额
+        max_daily_limit = settings.MAX_DAILY_LIMIT
+        if daily_total + order_total > max_daily_limit:
             raise BusinessError(
-                f"今日交易限额已用完: 今日已交易 {daily_total:.2f}，限额 {MAX_DAILY_LIMIT:.2f}"
+                f"今日交易限额已用完: 今日已交易 {daily_total:.2f}，限额 {max_daily_limit:.2f}"
             )
     
     # 生成订单号
@@ -207,43 +209,120 @@ async def _async_confirm_order(order_id: str, db: AsyncSession):
     异步确认订单（后台任务）
     
     负责检查订单是否可执行并更新状态
+    添加了订单确认回调和状态同步机制
     """
     from sqlalchemy import select
     from sqlalchemy.ext.asyncio import AsyncSession
+    from datetime import datetime
+    
+    max_retries = 3
+    retry_count = 0
+    
+    while retry_count < max_retries:
+        try:
+            # 查询订单
+            result = await db.execute(
+                select(Order).where(Order.order_id == order_id)
+            )
+            order = result.scalar_one_or_none()
+            
+            if not order:
+                logger.error(f"异步确认失败：订单 {order_id} 不存在")
+                return
+            
+            # 模拟订单处理逻辑
+            # 实际应该调用交易引擎执行订单
+            
+            # 更新订单状态为 pending（可执行）
+            order.status = "pending"
+            order.updated_at = datetime.utcnow()
+            await db.commit()
+            
+            logger.info(f"订单 {order_id} 异步确认完成，状态更新为 pending")
+            
+            # 通知客户端订单状态变更
+            await _notify_order_status_change(order_id, order.user_id, "pending")
+            
+            return
+            
+        except Exception as e:
+            retry_count += 1
+            logger.error(f"订单 {order_id} 异步确认失败 (尝试 {retry_count}/{max_retries}): {e}")
+            
+            if retry_count < max_retries:
+                # 指数退避等待
+                await asyncio.sleep(2 ** retry_count)
+            else:
+                # 所有重试都失败，更新订单状态为失败
+                try:
+                    result = await db.execute(
+                        select(Order).where(Order.order_id == order_id)
+                    )
+                    order = result.scalar_one_or_none()
+                    if order:
+                        order.status = "failed"
+                        order.updated_at = datetime.utcnow()
+                        await db.commit()
+                        
+                        # 通知客户端订单确认失败
+                        await _notify_order_status_change(order_id, order.user_id, "failed")
+                except Exception as notify_error:
+                    logger.error(f"更新订单状态失败: {notify_error}")
+
+
+async def _notify_order_status_change(order_id: str, user_id: int, status: str):
+    """
+    通知客户端订单状态变更
+    
+    通过 WebSocket 推送订单状态更新
+    """
+    try:
+        from app.services.notification_service import notification_service, NotificationType
+        
+        message_map = {
+            "pending": "订单已确认，等待执行",
+            "filled": "订单已成交",
+            "completed": "订单已完成",
+            "failed": "订单确认失败",
+            "cancelled": "订单已取消"
+        }
+        
+        await notification_service.send_notification(
+            user_id=user_id,
+            notification_type=NotificationType.ORDER,
+            title="订单状态更新",
+            content=f"订单 {order_id}: {message_map.get(status, status)}",
+            priority="high" if status in ["failed", "cancelled"] else "normal"
+        )
+        
+        logger.info(f"已发送订单 {order_id} 状态变更通知: {status}")
+        
+    except Exception as e:
+        logger.error(f"发送订单状态通知失败: {e}")
+
+
+async def _check_order_confirmation(order_id: str, db: AsyncSession) -> Optional[str]:
+    """
+    检查订单确认状态
+    
+    用于同步获取订单当前确认状态
+    返回订单状态或 None（如果订单不存在）
+    """
+    from sqlalchemy import select
     
     try:
-        # 查询订单
         result = await db.execute(
             select(Order).where(Order.order_id == order_id)
         )
         order = result.scalar_one_or_none()
         
-        if not order:
-            logger.error(f"异步确认失败：订单 {order_id} 不存在")
-            return
-        
-        # 模拟订单处理逻辑
-        # 实际应该调用交易引擎执行订单
-        
-        # 更新订单状态为 pending（可执行）
-        order.status = "pending"
-        await db.commit()
-        
-        logger.info(f"订单 {order_id} 异步确认完成，状态更新为 pending")
+        if order:
+            return order.status
+        return None
         
     except Exception as e:
-        logger.error(f"订单 {order_id} 异步确认失败: {e}")
-        try:
-            # 更新订单状态为失败
-            result = await db.execute(
-                select(Order).where(Order.order_id == order_id)
-            )
-            order = result.scalar_one_or_none()
-            if order:
-                order.status = "failed"
-                await db.commit()
-        except Exception:
-            pass
+        logger.error(f"检查订单确认状态失败: {e}")
+        return None
 
 
 @router.get("/{order_id}", response_model=OrderResponse)
