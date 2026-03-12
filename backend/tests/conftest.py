@@ -7,6 +7,7 @@ import asyncio
 import os
 import sys
 from typing import AsyncGenerator
+from unittest.mock import MagicMock, AsyncMock, patch
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.pool import StaticPool
@@ -31,6 +32,39 @@ def event_loop():
     asyncio.set_event_loop(loop)
     yield loop
     loop.close()
+
+
+@pytest.fixture(scope="function")
+def mock_redis():
+    """Mock Redis 客户端"""
+    mock = AsyncMock()
+    # 模拟 Redis 基本操作
+    mock.get = AsyncMock(return_value=None)
+    mock.set = AsyncMock(return_value=True)
+    mock.setex = AsyncMock(return_value=True)
+    mock.delete = AsyncMock(return_value=1)
+    mock.exists = AsyncMock(return_value=0)
+    mock.expire = AsyncMock(return_value=1)
+    mock.ttl = AsyncMock(return_value=60)
+    mock.zadd = AsyncMock(return_value=1)
+    mock.zremrangebyscore = AsyncMock(return_value=0)
+    mock.zcard = AsyncMock(return_value=0)
+    mock.zscore = AsyncMock(return_value=None)
+    mock.sadd = AsyncMock(return_value=1)
+    mock.smembers = AsyncMock(return_value=set())
+    mock.srem = AsyncMock(return_value=1)
+    mock.publish = AsyncMock(return_value=1)
+    mock.ping = AsyncMock(return_value=True)
+    mock.close = AsyncMock()
+    return mock
+
+
+@pytest.fixture(autouse=True)
+def patch_redis(mock_redis):
+    """自动 mock 所有 Redis 连接"""
+    with patch('redis.asyncio.Redis', return_value=mock_redis):
+        with patch('redis.Redis', return_value=mock_redis):
+            yield mock_redis
 
 
 @pytest_asyncio.fixture(scope="function")

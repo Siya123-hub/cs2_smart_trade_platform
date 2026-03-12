@@ -4,7 +4,7 @@
 """
 import pytest
 import asyncio
-from unittest.mock import Mock, AsyncMock, patch
+from unittest.mock import Mock, AsyncMock, patch, MagicMock
 from datetime import datetime
 
 from app.services.trading_service import TradingEngine, DEFAULT_TIMEOUT
@@ -58,8 +58,8 @@ class TestTradingEngine:
     @pytest.mark.asyncio
     async def test_get_arbitrage_opportunities(self, mock_db, mock_item):
         """测试获取搬砖机会"""
-        # Mock 查询结果
-        mock_result = Mock()
+        # Mock 查询结果 - 使用 MagicMock (不是 AsyncMock)
+        mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = [mock_item]
         mock_db.execute.return_value = mock_result
 

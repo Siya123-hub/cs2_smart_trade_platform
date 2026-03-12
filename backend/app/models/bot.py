@@ -43,8 +43,8 @@ class Bot(Base):
     # 错误信息
     last_error = Column(String(500), nullable=True)
     
-    # 拥有者
-    owner_id = Column(Integer, nullable=True)
+    # 拥有者 (外键关联 users 表)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     
     # 时间戳
     created_at = Column(DateTime, default=datetime.utcnow)

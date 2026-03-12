@@ -53,7 +53,7 @@ async def create_test_bot(test_db: AsyncSession, user: User) -> Bot:
         steam_id="123456789",
         username="testbot",
         status="online",
-        user_id=user.id
+        owner_id=user.id
     )
     test_db.add(bot)
     await test_db.commit()

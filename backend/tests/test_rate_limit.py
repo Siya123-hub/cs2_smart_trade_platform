@@ -75,7 +75,8 @@ class TestRateLimitMiddleware:
         request = MockRequest("/api/v1/test", "192.168.1.100")
         key = middleware._get_rate_limit_key(request, "/api/v1/test")
         
-        assert key == "192.168.1.100:/api/v1/test"
+        # 实现中包含 rate_limit: 前缀
+        assert key == "rate_limit:192.168.1.100:/api/v1/test"
     
     def test_get_endpoint_config_exact_match(self):
         """测试精确匹配端点配置"""
