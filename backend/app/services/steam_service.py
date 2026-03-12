@@ -239,6 +239,87 @@ class SteamAPI:
         except Exception as e:
             logger.warning(f"获取价格直方图失败: {market_hash_name}, 错误: {e}")
             return None
+    
+    # ========== 问题6：Steam卖出功能实现 ==========
+    
+    async def get_inventory(
+        self,
+        steam_id: str = None,
+        app_id: int = 730,
+        context_id: int = 2
+    ) -> Dict[str, Any]:
+        """
+        获取Steam库存 - 问题6：Steam卖出功能支持
+        
+        Args:
+            steam_id: Steam用户ID（自己的库存可以不传）
+            app_id: Steam App ID (730 = CS2/CSGO)
+            context_id: 库存上下文ID (2 = 市场库存)
+            
+        Returns:
+            库存数据
+        """
+        # 使用API获取库存（无需认证的公开库存）
+        url = f"{self.base_url}/IEconItems_730/GetPlayerItems/v0001/"
+        params = {
+            "key": self.api_key,
+        }
+        
+        if steam_id:
+            params["steamid"] = steam_id
+        
+        try:
+            data = await self._request(url, params=params)
+            return {
+                "success": True,
+                "assets": data.get("result", {}).get("items", [])
+            }
+        except Exception as e:
+            logger.warning(f"获取Steam库存失败: {e}")
+            return {"success": False, "assets": [], "error": str(e)}
+    
+    async def create_market_listing(
+        self,
+        asset_id: str,
+        context_id: str = "2",
+        price: float = None,
+        session_token: str = None
+    ) -> Dict[str, Any]:
+        """
+        创建Steam市场挂单 - 问题6：Steam卖出功能
+        
+        注意：此功能需要完整的Cookie认证，请使用 SteamTrade 类
+        
+        Args:
+            asset_id: 资产ID
+            context_id: 上下文ID
+            price: 价格（可选）
+            session_token: Session Token（可选）
+            
+        Returns:
+            创建结果
+        """
+        # 检查是否有session_token，如果有则使用完整创建流程
+        if session_token:
+            # 创建临时的SteamTrade实例来执行操作
+            trade = SteamTrade(
+                steam_id="",
+                session_token=session_token
+            )
+            return await trade.create_listing(
+                asset_id=asset_id,
+                price=price or 0,
+                app_id=730,
+                quantity=1
+            )
+        
+        # 如果没有认证信息，返回提示信息
+        logger.warning("创建市场挂单需要完整的Session认证")
+        return {
+            "success": False,
+            "error": "需要Steam登录认证信息",
+            "message": "请配置steam_login和webcookie以使用卖出功能"
+        }
 
 
 class SteamTrade:

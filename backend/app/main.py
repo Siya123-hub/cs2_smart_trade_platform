@@ -2,6 +2,7 @@
 """
 CS2 智能交易平台 - 后端入口
 """
+import asyncio
 from contextlib import asynccontextmanager
 import json
 import threading
@@ -12,7 +13,7 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from functools import wraps
 
-from app.core.config import settings
+from app.core.config import settings, check_config_reload, subscribe_config_change
 from app.core.database import engine, Base
 from app.core.encryption import encryption_manager
 from app.core.logging_config import init_logging
@@ -31,6 +32,9 @@ logger = logging.getLogger(__name__)
 # 全局 SteamAPI 实例（线程安全）
 _steam_api: Optional[SteamAPI] = None
 _steam_api_lock = threading.Lock()
+
+# 全局配置热重载任务
+_config_reload_task: Optional[asyncio.Task] = None
 
 # 缓存降级状态
 _cache_degraded = False
@@ -65,7 +69,7 @@ def cache_fallback(func):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
-    global _steam_api, _cache_degraded
+    global _steam_api, _cache_degraded, _config_reload_task
     
     # 初始化日志配置
     init_logging(log_file="logs/app.log")
@@ -91,7 +95,31 @@ async def lifespan(app: FastAPI):
     _steam_api = SteamAPI()
     logger.info("SteamAPI initialized")
     
+    # 启动配置热重载后台任务
+    async def config_reload_loop():
+        """配置热重载循环"""
+        while True:
+            try:
+                await asyncio.sleep(settings.CONFIG_RELOAD_INTERVAL)
+                if check_config_reload():
+                    logger.info("配置已自动热重载")
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"配置热重载检查异常: {e}")
+    
+    _config_reload_task = asyncio.create_task(config_reload_loop())
+    logger.info(f"配置热重载任务已启动 (间隔: {settings.CONFIG_RELOAD_INTERVAL}秒)")
+    
     yield
+    
+    # 关闭时取消配置热重载任务
+    if _config_reload_task:
+        _config_reload_task.cancel()
+        try:
+            await _config_reload_task
+        except asyncio.CancelledError:
+            pass
     
     # 关闭时清理 SteamAPI 资源
     if _steam_api:
@@ -129,8 +157,8 @@ def create_app() -> FastAPI:
 
     # Rate Limiting 中间件 (测试环境禁用 - 基于DEBUG标志)
     if settings.RATE_LIMIT_ENABLED and not settings.TESTING:
-        rate_limit_config = json.loads(settings.RATE_LIMIT_ENDPOINTS)
-        app.add_middleware(RateLimitMiddleware, config=rate_limit_config)
+        # RATE_LIMIT_ENDPOINTS 现在是字典类型，无需 json.loads
+        app.add_middleware(RateLimitMiddleware, config=settings.RATE_LIMIT_ENDPOINTS)
 
     # 并发连接数限制中间件
     if not settings.TESTING:

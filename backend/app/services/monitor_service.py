@@ -31,24 +31,30 @@ class DistributedLock:
         self._key = f"lock:{key}"
         self._ttl = ttl
         self._lock_id = None
+        self._acquired = False  # 修复：跟踪锁获取状态
     
     async def acquire(self, blocking: bool = True, timeout: int = 30) -> bool:
         """获取锁"""
         import uuid
-        self._lock_id = str(uuid.uuid4())
         start_time = asyncio.get_event_loop().time()
         
         while True:
+            # 每次尝试使用新的lock_id
+            lock_id = str(uuid.uuid4())
+            
             # 尝试设置锁
             acquired = await self._redis.set(
                 self._key,
-                self._lock_id,
+                lock_id,
                 nx=True,
                 ex=self._ttl
             )
             
             if acquired:
-                logger.debug(f"Lock acquired: {self._key}")
+                # 必须在获取成功后设置lock_id
+                self._lock_id = lock_id
+                self._acquired = True
+                logger.debug(f"Lock acquired: {self._key}, id={self._lock_id}")
                 return True
             
             if not blocking:
@@ -64,7 +70,9 @@ class DistributedLock:
     
     async def release(self) -> bool:
         """释放锁"""
-        if self._lock_id is None:
+        # 修复：先检查是否获取了锁
+        if not self._acquired or self._lock_id is None:
+            logger.warning(f"Lock not acquired, cannot release: {self._key}")
             return False
         
         # 使用 Lua 脚本确保原子性释放
@@ -77,6 +85,7 @@ class DistributedLock:
         """
         try:
             result = await self._redis.eval(lua_script, 1, self._key, self._lock_id)
+            self._acquired = False  # 重置获取状态
             return result == 1
         except Exception as e:
             logger.error(f"Lock release error: {e}")
@@ -119,8 +128,13 @@ class PriceMonitor:
         self.running = False
         self.monitor_tasks: Dict[int, MonitorTask] = {}
         self.alert_callbacks: List[Callable] = []
+        # 异步任务追踪列表 - 确保任务被正确管理
+        self._background_tasks: List[asyncio.Task] = []
         # 节点 ID，用于分布式锁标识
         self.node_id = node_id or f"monitor-{id(self)}"
+        # 新增：Redis可用状态和降级模式标志
+        self._redis_available = True
+        self._fallback_mode = False
     
     @classmethod
     async def get_redis(cls):
@@ -132,31 +146,73 @@ class PriceMonitor:
         """关闭 Redis 连接（由全局管理器统一管理）"""
         pass  # 不再单独关闭，由 redis_manager 统一管理
     
+    async def _check_redis_health(self) -> bool:
+        """检查Redis健康状态"""
+        try:
+            redis = await self.get_redis()
+            if redis is None:
+                self._redis_available = False
+                self._fallback_mode = True
+                return False
+            await redis.ping()
+            self._redis_available = True
+            self._fallback_mode = False
+            return True
+        except Exception as e:
+            logger.warning(f"Redis健康检查失败: {e}")
+            self._redis_available = False
+            self._fallback_mode = True
+            return False
+    
     async def acquire_leader_lock(self, lock_name: str, ttl: int = 60) -> DistributedLock:
         """获取领导者锁"""
         redis_client = await self.get_redis()
+        if redis_client is None:
+            logger.warning(f"Redis不可用，无法获取锁: {lock_name}")
+            # 返回一个虚拟锁对象
+            return DistributedLock(redis_client, lock_name, ttl) if redis_client else None
         lock = DistributedLock(redis_client, lock_name, ttl)
         return lock
     
     async def start(self):
-        """启动监控（分布式协调）"""
+        """启动监控（带降级支持）"""
+        # 先检查Redis状态
+        redis_healthy = await self._check_redis_health()
+        
+        if self._fallback_mode:
+            logger.warning("Redis不可用，进入本地降级模式")
+            # 降级模式：使用本地锁，不使用分布式锁
+            self.running = True
+            self._background_tasks.append(asyncio.create_task(self.poll_buff_prices()))
+            self._background_tasks.append(asyncio.create_task(self.check_arbitrage()))
+            return
+        
         # 尝试获取领导者锁
         lock = await self.acquire_leader_lock("price_monitor_leader", ttl=60)
         
+        if lock is None:
+            logger.warning("无法获取Redis锁，进入降级模式")
+            self.running = True
+            self._background_tasks.append(asyncio.create_task(self.poll_buff_prices()))
+            self._background_tasks.append(asyncio.create_task(self.check_arbitrage()))
+            return
+        
         if await lock.acquire(blocking=False):
             self.running = True
-            logger.info(f"价格监控服务已启动 (节点: {self.node_id})")
+            logger.info(f"价格监控服务已启动 (节点: {self.node_id}, 主节点)")
             
-            # 启动各个监控任务
-            asyncio.create_task(self.poll_buff_prices())
-            asyncio.create_task(self.check_arbitrage())
+            # 启动各个监控任务 - 保存任务引用以便追踪
+            self._background_tasks.append(asyncio.create_task(self.poll_buff_prices()))
+            self._background_tasks.append(asyncio.create_task(self.check_arbitrage()))
             
-            # 启动锁续期任务
-            asyncio.create_task(self._lock_renewal(lock))
+            # 启动锁续期任务 - 保存任务引用
+            self._background_tasks.append(asyncio.create_task(self._lock_renewal(lock)))
         else:
-            logger.info(f"监控服务已在其他节点运行，等待任务分配 (节点: {self.node_id})")
-            # 作为备用节点，可以执行其他任务
+            # 锁获取失败，作为备用节点 - 问题7：监控服务锁失败无降级
+            logger.info(f"主节点锁获取失败，作为备用节点运行 (节点: {self.node_id})")
             self.running = True
+            # 备用节点执行有限任务（如只监听告警）
+            self._background_tasks.append(asyncio.create_task(self.check_arbitrage()))
     
     async def _lock_renewal(self, lock: DistributedLock):
         """定期续期领导者锁"""
@@ -168,6 +224,17 @@ class PriceMonitor:
     async def stop(self):
         """停止监控"""
         self.running = False
+        
+        # 取消所有后台任务
+        for task in self._background_tasks:
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+        
+        self._background_tasks.clear()
         logger.info(f"价格监控服务已停止 (节点: {self.node_id})")
     
     async def poll_buff_prices(self):
@@ -201,8 +268,8 @@ class PriceMonitor:
                             if price_data:
                                 new_price = float(price_data.get("lowest_price", 0))
                                 
-                                # 只有价格变化时才更新和记录历史 (P1-问题6)
-                                if item.current_price is None or abs(new_price - item.current_price) > 0.01:
+                                # 只有价格变化时才更新和记录历史 (使用配置阈值)
+                                if item.current_price is None or abs(new_price - item.current_price) > settings.PRICE_CHANGE_THRESHOLD:
                                     # 更新数据库
                                     item.current_price = new_price
                                     item.volume_24h = int(price_data.get("volume", 0))

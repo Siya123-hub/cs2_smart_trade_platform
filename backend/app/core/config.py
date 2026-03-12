@@ -3,10 +3,71 @@
 应用配置
 """
 import os
+import json
+import logging
 from functools import lru_cache
-from typing import Optional
+from typing import Optional, Dict, Callable, List
+from pathlib import Path
+
 from pydantic_settings import BaseSettings
 from pydantic import Field, ConfigDict
+
+
+logger = logging.getLogger(__name__)
+
+
+class ConfigReloader:
+    """配置热重载管理器"""
+    
+    def __init__(self, config_file: str = ".env"):
+        self._config_file = config_file
+        self._subscribers: List[Callable[[], None]] = []
+        self._last_mtime: float = 0
+        self._settings_instance: Optional['Settings'] = None
+    
+    def watch(self, settings_instance: 'Settings'):
+        """开始监听配置变化"""
+        self._settings_instance = settings_instance
+        config_path = Path(self._config_file)
+        if config_path.exists():
+            self._last_mtime = config_path.stat().st_mtime
+    
+    def check_and_reload(self) -> bool:
+        """检查并重载配置（需手动调用或配合定时任务）"""
+        config_path = Path(self._config_file)
+        if not config_path.exists():
+            return False
+        
+        current_mtime = config_path.stat().st_mtime
+        if current_mtime > self._last_mtime:
+            logger.info(f"检测到配置文件变化: {self._config_file}")
+            self._last_mtime = current_mtime
+            
+            # 清除缓存
+            get_settings.cache_clear()
+            
+            # 重新加载
+            new_settings = get_settings()
+            
+            # 通知订阅者
+            for callback in self._subscribers:
+                try:
+                    callback()
+                except Exception as e:
+                    logger.error(f"配置变更回调错误: {e}")
+            
+            logger.info("配置已热重载")
+            return True
+        
+        return False
+    
+    def subscribe(self, callback: Callable[[], None]):
+        """订阅配置变更"""
+        self._subscribers.append(callback)
+
+
+# 全局配置重载器
+_config_reloader = ConfigReloader()
 
 
 class Settings(BaseSettings):
@@ -74,14 +135,23 @@ class Settings(BaseSettings):
     RATE_LIMIT_DEFAULT_BURST: int = 10  # 默认突发限制
     TESTING: bool = Field(default=False)  # 测试模式标志
     
-    # 限流端点配置（JSON格式字符串）
-    RATE_LIMIT_ENDPOINTS: str = """{
+    # 限流端点配置（字典格式，支持热重载）
+    RATE_LIMIT_ENDPOINTS: Dict = Field(default_factory=lambda: {
         "/api/v1/auth/login": {"requests": 5, "window": 60, "burst": 3},
         "/api/v1/auth/register": {"requests": 3, "window": 300, "burst": 1},
         "/api/v1/orders": {"requests": 120, "window": 60, "burst": 20},
         "/api/v1/monitoring": {"requests": 300, "window": 60, "burst": 50},
         "/api/v1/bots": {"requests": 100, "window": 60, "burst": 15}
-    }"""
+    })
+
+    # 搬砖流程配置
+    ARBITRAGE_SETTLE_WAIT: int = Field(default=10, description="搬砖买入后等待到账时间(秒)")
+    
+    # 价格监控配置
+    PRICE_CHANGE_THRESHOLD: float = Field(default=0.01, description="价格变化阈值(元)，低于此值不记录历史")
+    
+    # 配置热重载
+    CONFIG_RELOAD_INTERVAL: int = Field(default=30, description="配置检查间隔(秒)")
 
     model_config = ConfigDict(env_file=".env", case_sensitive=True, extra="allow")
 
@@ -93,12 +163,39 @@ class Settings(BaseSettings):
         if not self.ENCRYPTION_KEY:
             import warnings
             warnings.warn("未设置 ENCRYPTION_KEY，敏感数据将使用临时密钥加密")
+    
+    def get_rate_limit_config(self, endpoint: str) -> Dict:
+        """获取特定端点的限流配置"""
+        return self.RATE_LIMIT_ENDPOINTS.get(endpoint, {
+            "requests": self.RATE_LIMIT_DEFAULT_REQUESTS,
+            "window": self.RATE_LIMIT_DEFAULT_WINDOW,
+            "burst": self.RATE_LIMIT_DEFAULT_BURST
+        })
 
 
 @lru_cache()
 def get_settings() -> Settings:
     """获取配置单例"""
-    return Settings()
+    settings_obj = Settings()
+    # 初始化配置热重载
+    _config_reloader.watch(settings_obj)
+    return settings_obj
+
+
+def reload_settings() -> Settings:
+    """强制重载配置"""
+    get_settings.cache_clear()
+    return get_settings()
+
+
+def subscribe_config_change(callback: Callable[[], None]):
+    """订阅配置变更"""
+    _config_reloader.subscribe(callback)
+
+
+def check_config_reload() -> bool:
+    """检查并重载配置（可由定时任务调用）"""
+    return _config_reloader.check_and_reload()
 
 
 settings = get_settings()

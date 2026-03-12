@@ -26,6 +26,18 @@ class BuffAPICircuitOpen(BuffAPIError):
     pass
 
 
+class RetryState:
+    """重试状态追踪 - 问题8：缺乏请求重试状态追踪"""
+    
+    def __init__(self, endpoint: str):
+        self.endpoint = endpoint
+        self.total_attempts = 0
+        self.successful_attempts = 0
+        self.failed_attempts = 0
+        self.last_error: Optional[str] = None
+        self.last_attempt_time: Optional[datetime] = None
+
+
 async def _exponential_backoff_with_jitter(
     retry_count: int, 
     base_delay: float = 5.0, 
@@ -75,6 +87,29 @@ class BuffAPI:
         self.cookie = cookie
         self.last_request_time = 0
         self.min_interval = settings.BUFF_API_INTERVAL
+        # 问题8：重试状态追踪
+        self._retry_states: Dict[str, RetryState] = {}
+    
+    def _get_retry_state(self, endpoint: str) -> RetryState:
+        """获取或创建重试状态"""
+        if endpoint not in self._retry_states:
+            self._retry_states[endpoint] = RetryState(endpoint)
+        return self._retry_states[endpoint]
+    
+    def get_retry_stats(self) -> Dict[str, Any]:
+        """获取重试统计 - 问题8"""
+        return {
+            endpoint: {
+                "total": state.total_attempts,
+                "success": state.successful_attempts,
+                "failed": state.failed_attempts,
+                "success_rate": state.successful_attempts / state.total_attempts * 100
+                    if state.total_attempts > 0 else 0,
+                "last_error": state.last_error,
+                "last_attempt": state.last_attempt_time.isoformat() if state.last_attempt_time else None
+            }
+            for endpoint, state in self._retry_states.items()
+        }
     
     async def close(self):
         """关闭会话"""
@@ -92,9 +127,12 @@ class BuffAPI:
         max_retries: int = None,
         **kwargs
     ) -> Dict[str, Any]:
-        """发送请求 (带频率控制和重试机制)"""
+        """发送请求 (带频率控制和重试机制) - 问题8：添加重试状态追踪"""
         max_retries = max_retries or self.MAX_RETRIES
         retry_count = 0
+        # 提取endpoint用于追踪
+        endpoint = url.split('/api')[-1] if '/api' in url else url
+        retry_state = self._get_retry_state(endpoint)
         
         while retry_count < max_retries:
             try:
@@ -121,6 +159,11 @@ class BuffAPI:
                     if response.status == 429:
                         # 请求过于频繁，使用指数退避+抖动后重试
                         retry_count += 1
+                        retry_state.total_attempts += 1
+                        retry_state.failed_attempts += 1
+                        retry_state.last_error = "429 Too Many Requests"
+                        retry_state.last_attempt_time = datetime.utcnow()
+                        
                         if retry_count > max_retries:
                             raise Exception(f"BUFF API 429 错误: 超过最大重试次数 {max_retries}")
                         delay = await _exponential_backoff_with_jitter(retry_count)
@@ -136,10 +179,20 @@ class BuffAPI:
                     if data.get("code") != "OK":
                         raise Exception(f"BUFF API Error: {data.get('message', 'Unknown error')}")
                     
+                    # 问题8：记录成功
+                    retry_state.total_attempts += 1
+                    retry_state.successful_attempts += 1
+                    retry_state.last_attempt_time = datetime.utcnow()
+                    
                     return data.get("data", {})
                     
             except asyncio.TimeoutError:
                 retry_count += 1
+                retry_state.total_attempts += 1
+                retry_state.failed_attempts += 1
+                retry_state.last_error = "Timeout"
+                retry_state.last_attempt_time = datetime.utcnow()
+                
                 if retry_count > max_retries:
                     raise BuffAPIError(f"BUFF API 请求超时: 超过最大重试次数 {max_retries}")
                 delay = await _exponential_backoff_with_jitter(retry_count)
@@ -148,16 +201,32 @@ class BuffAPI:
                 continue
             except CircuitBreakerOpen as e:
                 # 熔断器开启，不再重试，直接抛出异常
+                retry_state.total_attempts += 1
+                retry_state.failed_attempts += 1
+                retry_state.last_error = f"Circuit breaker open: {e}"
+                retry_state.last_attempt_time = datetime.utcnow()
                 logger.warning(f"BUFF API 熔断器开启: {e}")
                 raise BuffAPICircuitOpen(str(e))
             except aiohttp.ClientError as e:
                 retry_count += 1
+                retry_state.total_attempts += 1
+                retry_state.failed_attempts += 1
+                retry_state.last_error = str(e)
+                retry_state.last_attempt_time = datetime.utcnow()
+                
                 if retry_count > max_retries:
                     raise Exception(f"BUFF API 连接错误: {e}")
                 delay = await _exponential_backoff_with_jitter(retry_count)
                 logger.warning(f"BUFF API 连接错误: {e}，第 {retry_count} 次重试，等待 {delay:.2f} 秒...")
                 await asyncio.sleep(delay)
                 continue
+            except Exception as e:
+                # 其他异常也记录
+                retry_state.total_attempts += 1
+                retry_state.failed_attempts += 1
+                retry_state.last_error = str(e)
+                retry_state.last_attempt_time = datetime.utcnow()
+                raise
         
         raise Exception("BUFF API 请求失败: 达到最大重试次数")
     
