@@ -318,34 +318,39 @@ async def batch_list_items(
     success_count = 0
     failed_items = []
     
-    for item_id in request.item_ids:
+    async with db.begin():
         try:
-            result = await db.execute(
-                select(Inventory).where(
-                    Inventory.id == item_id,
-                    Inventory.user_id == current_user.id
-                )
-            )
-            item = result.scalar_one_or_none()
+            for item_id in request.item_ids:
+                try:
+                    result = await db.execute(
+                        select(Inventory).where(
+                            Inventory.id == item_id,
+                            Inventory.user_id == current_user.id
+                        )
+                    )
+                    item = result.scalar_one_or_none()
+                    
+                    if not item:
+                        failed_items.append({"id": item_id, "error": "物品不存在"})
+                        continue
+                    
+                    if item.status == 'listed':
+                        failed_items.append({"id": item_id, "error": "物品已上架"})
+                        continue
+                    
+                    # 上架
+                    item.status = 'listed'
+                    item.listed_at = datetime.utcnow()
+                    item.updated_at = datetime.utcnow()
+                    success_count += 1
+                    
+                except Exception as e:
+                    failed_items.append({"id": item_id, "error": str(e)})
             
-            if not item:
-                failed_items.append({"id": item_id, "error": "物品不存在"})
-                continue
-            
-            if item.status == 'listed':
-                failed_items.append({"id": item_id, "error": "物品已上架"})
-                continue
-            
-            # 上架
-            item.status = 'listed'
-            item.listed_at = datetime.utcnow()
-            item.updated_at = datetime.utcnow()
-            success_count += 1
-            
+            await db.commit()
         except Exception as e:
-            failed_items.append({"id": item_id, "error": str(e)})
-    
-    await db.commit()
+            await db.rollback()
+            raise e
     
     return BatchResponse(
         success=len(failed_items) == 0,
@@ -366,34 +371,39 @@ async def batch_unlist_items(
     success_count = 0
     failed_items = []
     
-    for item_id in request.item_ids:
+    async with db.begin():
         try:
-            result = await db.execute(
-                select(Inventory).where(
-                    Inventory.id == item_id,
-                    Inventory.user_id == current_user.id
-                )
-            )
-            item = result.scalar_one_or_none()
+            for item_id in request.item_ids:
+                try:
+                    result = await db.execute(
+                        select(Inventory).where(
+                            Inventory.id == item_id,
+                            Inventory.user_id == current_user.id
+                        )
+                    )
+                    item = result.scalar_one_or_none()
+                    
+                    if not item:
+                        failed_items.append({"id": item_id, "error": "物品不存在"})
+                        continue
+                    
+                    if item.status != 'listed':
+                        failed_items.append({"id": item_id, "error": "物品未上架"})
+                        continue
+                    
+                    # 下架
+                    item.status = 'owned'
+                    item.listed_at = None
+                    item.updated_at = datetime.utcnow()
+                    success_count += 1
+                    
+                except Exception as e:
+                    failed_items.append({"id": item_id, "error": str(e)})
             
-            if not item:
-                failed_items.append({"id": item_id, "error": "物品不存在"})
-                continue
-            
-            if item.status != 'listed':
-                failed_items.append({"id": item_id, "error": "物品未上架"})
-                continue
-            
-            # 下架
-            item.status = 'owned'
-            item.listed_at = None
-            item.updated_at = datetime.utcnow()
-            success_count += 1
-            
+            await db.commit()
         except Exception as e:
-            failed_items.append({"id": item_id, "error": str(e)})
-    
-    await db.commit()
+            await db.rollback()
+            raise e
     
     return BatchResponse(
         success=len(failed_items) == 0,

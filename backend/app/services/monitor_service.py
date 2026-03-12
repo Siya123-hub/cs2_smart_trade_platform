@@ -26,7 +26,11 @@ logger = logging.getLogger(__name__)
 class DistributedLock:
     """Redis 分布式锁"""
     
-    def __init__(self, redis_client, key: str, ttl: int = 300):
+    # 合理的默认 TTL 配置
+    DEFAULT_TTL = 60  # 默认60秒，更合理的锁持有时间
+    LONG_TTL = 120    # 长时间操作使用的锁
+    
+    def __init__(self, redis_client, key: str, ttl: int = DEFAULT_TTL):
         self._redis = redis_client
         self._key = f"lock:{key}"
         self._ttl = ttl
@@ -173,7 +177,7 @@ class PriceMonitor:
     async def poll_buff_prices(self):
         """轮询 BUFF 价格（分布式版本）"""
         # 使用分布式锁防止多节点同时轮询
-        lock = await self.acquire_leader_lock("buff_price_poll", ttl=300)
+        lock = await self.acquire_leader_lock("buff_price_poll", ttl=DistributedLock.LONG_TTL)
         
         while self.running:
             try:

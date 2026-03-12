@@ -2,6 +2,7 @@
 """
 订单端点
 """
+import asyncio
 import logging
 from typing import Optional, List
 from fastapi import APIRouter, Depends, Query, status, Header
@@ -88,8 +89,14 @@ async def create_order(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    x_async_confirm: bool = Header(False, alias="X-Async-Confirm", description="是否异步确认订单"),
 ):
-    """创建订单（支持幂等性）"""
+    """创建订单（支持幂等性和异步确认）
+    
+    Args:
+        idempotency_key: 幂等性 key，避免重复创建订单
+        x_async_confirm: 是否异步确认订单（后台处理）
+    """
     # 如果提供了幂等性 key，进行检查
     if idempotency_key:
         # 生成内部幂等性 key
@@ -162,6 +169,9 @@ async def create_order(
     import uuid
     order_id = f"ORD-{uuid.uuid4().hex[:12].upper()}"
     
+    # 根据是否异步确认设置初始状态
+    initial_status = "pending_confirm" if x_async_confirm else "pending"
+    
     order = Order(
         order_id=order_id,
         user_id=current_user.id,
@@ -170,11 +180,17 @@ async def create_order(
         price=validated_price,
         quantity=validated_quantity,
         source=order_data.source.value,
+        status=initial_status,
     )
     
     db.add(order)
     await db.commit()
     await db.refresh(order)
+    
+    # 如果启用异步确认，后台处理订单
+    if x_async_confirm:
+        asyncio.create_task(_async_confirm_order(order_id, db))
+        logger.info(f"订单 {order_id} 已创建，等待异步确认")
     
     # 构建响应数据
     response_data = OrderResponse.model_validate(order).model_dump()
@@ -184,6 +200,50 @@ async def create_order(
         await save_idempotent_response(internal_key, response_data)
     
     return response_data
+
+
+async def _async_confirm_order(order_id: str, db: AsyncSession):
+    """
+    异步确认订单（后台任务）
+    
+    负责检查订单是否可执行并更新状态
+    """
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import AsyncSession
+    
+    try:
+        # 查询订单
+        result = await db.execute(
+            select(Order).where(Order.order_id == order_id)
+        )
+        order = result.scalar_one_or_none()
+        
+        if not order:
+            logger.error(f"异步确认失败：订单 {order_id} 不存在")
+            return
+        
+        # 模拟订单处理逻辑
+        # 实际应该调用交易引擎执行订单
+        
+        # 更新订单状态为 pending（可执行）
+        order.status = "pending"
+        await db.commit()
+        
+        logger.info(f"订单 {order_id} 异步确认完成，状态更新为 pending")
+        
+    except Exception as e:
+        logger.error(f"订单 {order_id} 异步确认失败: {e}")
+        try:
+            # 更新订单状态为失败
+            result = await db.execute(
+                select(Order).where(Order.order_id == order_id)
+            )
+            order = result.scalar_one_or_none()
+            if order:
+                order.status = "failed"
+                await db.commit()
+        except Exception:
+            pass
 
 
 @router.get("/{order_id}", response_model=OrderResponse)

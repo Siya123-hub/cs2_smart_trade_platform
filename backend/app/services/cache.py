@@ -794,10 +794,49 @@ class CacheManager:
 
 # 全局缓存实例
 _cache: Optional[CacheManager] = None
+_cache_initialized: bool = False  # 添加初始化标记
+
+
+async def init_cache() -> CacheManager:
+    """
+    初始化缓存服务（需要在应用启动时调用）
+    
+    Returns:
+        初始化的缓存管理器
+    """
+    global _cache, _cache_initialized
+    
+    if _cache is None:
+        # 从配置读取
+        from app.core.config import settings
+        
+        backend = CacheBackend.MEMORY
+        if settings.REDIS_URL:
+            backend = CacheBackend.REDIS
+        
+        _cache = CacheManager(
+            backend=backend,
+            redis_url=settings.REDIS_URL if hasattr(settings, 'REDIS_URL') else None
+        )
+    
+    # 执行初始化
+    try:
+        await _cache.initialize()
+        _cache_initialized = True
+        logger.info("Cache initialized successfully")
+    except Exception as e:
+        logger.warning(f"Cache initialization failed: {e}")
+    
+    return _cache
 
 
 def get_cache() -> CacheManager:
-    """获取全局缓存实例"""
+    """
+    获取全局缓存实例
+    
+    注意：此函数返回缓存管理器，但 Redis 后端可能未初始化。
+    如需确保初始化完成，请先调用 init_cache()
+    """
     global _cache
     if _cache is None:
         # 从配置读取
@@ -811,20 +850,25 @@ def get_cache() -> CacheManager:
             backend=backend,
             redis_url=settings.REDIS_URL if hasattr(settings, 'REDIS_URL') else None
         )
-        # 创建实例后自动调用 initialize()
-        import asyncio
-        try:
-            try:
-                loop = asyncio.get_running_loop()
-                # 在异步环境中，使用 create_task 后台执行
-                asyncio.create_task(_cache.initialize())
-            except RuntimeError:
-                # 没有运行中的事件循环
-                asyncio.run(_cache.initialize())
-        except Exception as e:
-            logger.warning(f"Cache auto-initialize failed: {e}")
+        # 不再自动调用 initialize()，避免异步上下文问题
+        # 由外部应用启动时调用 init_cache()
     
     return _cache
+
+
+async def ensure_cache_initialized() -> CacheManager:
+    """
+    确保缓存已初始化（如果未初始化则进行初始化）
+    
+    Returns:
+        缓存管理器
+    """
+    global _cache_initialized
+    
+    if not _cache_initialized:
+        await init_cache()
+    
+    return get_cache()
 
 
 # ============ 便捷函数 ============
