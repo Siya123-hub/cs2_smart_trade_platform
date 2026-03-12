@@ -3,7 +3,7 @@
 机器人模型
 """
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime, Text, Index
+from sqlalchemy import Column, Integer, String, DateTime, Text, Index, ForeignKey
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
@@ -50,9 +50,9 @@ class Bot(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    # 关联
-    # trades = relationship("BotTrade", back_populates="bot")
-    # monitor_tasks = relationship("MonitorTask", back_populates="bot")
+    # 关联 - 取消注释以修复P0问题
+    trades = relationship("BotTrade", back_populates="bot", lazy="selectin")
+    monitor_tasks = relationship("MonitorTask", back_populates="bot", lazy="selectin")
 
     # 属性：用于解密访问
     @property
@@ -106,7 +106,7 @@ class BotTrade(Base):
     __tablename__ = "bot_trades"
 
     id = Column(Integer, primary_key=True, index=True)
-    bot_id = Column(Integer, nullable=False, index=True)
+    bot_id = Column(Integer, ForeignKey("bots.id"), nullable=False, index=True)
     
     # 交易信息
     trade_offer_id = Column(String(100), unique=True, nullable=True)
