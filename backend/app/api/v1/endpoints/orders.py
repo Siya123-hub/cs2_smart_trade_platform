@@ -111,6 +111,53 @@ async def create_order(
     validated_price = validate_price(order_data.price)
     validated_quantity = validate_quantity(order_data.quantity)
     
+    # ========== 交易限额检查 ==========
+    # 计算订单总金额
+    order_total = validated_price * validated_quantity
+    
+    # 检查用户余额是否充足（仅针对购买订单）
+    if order_data.side.value == "buy":
+        # 获取用户当前余额
+        user_balance = current_user.balance or 0
+        if isinstance(user_balance, str):
+            user_balance = float(user_balance)
+        
+        if user_balance < order_total:
+            raise BusinessError(
+                f"余额不足: 当前余额 {user_balance:.2f}，订单金额 {order_total:.2f}"
+            )
+        
+        # 检查单笔订单限额
+        MAX_SINGLE_ORDER = 10000.0  # 单笔订单最大金额
+        if order_total > MAX_SINGLE_ORDER:
+            raise BusinessError(
+                f"单笔订单金额超限: 最大 {MAX_SINGLE_ORDER:.2f}，订单金额 {order_total:.2f}"
+            )
+        
+        # 检查日累计限额
+        from datetime import datetime, timedelta
+        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        # 查询今日已成交的订单总金额
+        daily_orders_query = select(func.sum(Order.price * Order.quantity)).where(
+            and_(
+                Order.user_id == current_user.id,
+                Order.side == "buy",
+                Order.status.in_(["completed", "filled"]),  # 只计算已完成的订单
+                Order.created_at >= today_start
+            )
+        )
+        daily_result = await db.execute(daily_orders_query)
+        daily_total = daily_result.scalar() or 0
+        if isinstance(daily_total, str):
+            daily_total = float(daily_total)
+        
+        MAX_DAILY_LIMIT = 50000.0  # 每日累计最大交易金额
+        if daily_total + order_total > MAX_DAILY_LIMIT:
+            raise BusinessError(
+                f"今日交易限额已用完: 今日已交易 {daily_total:.2f}，限额 {MAX_DAILY_LIMIT:.2f}"
+            )
+    
     # 生成订单号
     import uuid
     order_id = f"ORD-{uuid.uuid4().hex[:12].upper()}"

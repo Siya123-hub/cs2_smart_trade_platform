@@ -97,7 +97,11 @@ def create_api_router():
     
     # 导入并注册 v2 路由
     try:
-        from app.api.v2 import router as v2_router
+        from app.api.v2 import router as v2_routes
+        # 创建带 prefix 的 v2 路由器并注册
+        v2_router = APIRouter(prefix="/v2")
+        # 直接 include v2 路由，FastAPI 会自动处理 prefix
+        v2_router.include_router(v2_routes)
         router.include_router(v2_router, tags=["v2"])
     except ImportError:
         logger.warning("V2 路由未实现")

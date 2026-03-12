@@ -64,7 +64,24 @@ apiClient.interceptors.response.use(
     // 错误信息处理
     let errorMessage = '请求失败'
     
-    if (status === 429) {
+    if (status === 400) {
+      // 业务逻辑错误 - 尝试从响应中获取详细错误信息
+      const detail = error.response?.data?.detail
+      if (Array.isArray(detail)) {
+        // FastAPI validation error 格式
+        errorMessage = detail.map((e: any) => e.msg || e.message || JSON.stringify(e)).join(', ')
+      } else if (typeof detail === 'string') {
+        errorMessage = detail
+      } else if (error.response?.data?.message) {
+        errorMessage = error.response.data.message
+      } else {
+        errorMessage = '请求参数错误'
+      }
+    } else if (status === 403) {
+      errorMessage = '没有权限执行此操作'
+    } else if (status === 404) {
+      errorMessage = '请求的资源不存在'
+    } else if (status === 429) {
       errorMessage = '请求过于频繁，请稍后重试'
     } else if (status === 500) {
       errorMessage = '服务器内部错误'

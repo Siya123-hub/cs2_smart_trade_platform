@@ -98,7 +98,7 @@ class ConnectionManager:
     
     @staticmethod
     async def keep_alive(websocket: WebSocket, user_id: int):
-        """保持连接活跃 - 发送ping"""
+        """保持连接活跃 - 发送ping，正确处理pong响应"""
         try:
             while True:
                 await websocket.send_json({
@@ -109,12 +109,26 @@ class ConnectionManager:
                 try:
                     data = await asyncio.wait_for(websocket.receive_json(), timeout=ConnectionManager.HEARTBEAT_TIMEOUT)
                     if data.get("type") == "pong":
+                        # 收到有效的pong响应，重置心跳计时器
+                        logger.debug(f"Received pong from user {user_id}")
                         continue
+                    else:
+                        # 收到非pong消息，可能需要处理其他消息
+                        logger.warning(f"Unexpected message type during heartbeat: {data.get('type')}")
                 except asyncio.TimeoutError:
-                    logger.warning(f"Heartbeat timeout for user {user_id}")
+                    logger.warning(f"Heartbeat timeout for user {user_id}, closing connection")
+                    # 通知连接管理器断开连接并清理资源
+                    ws_manager.disconnect(websocket)
+                    # 尝试发送关闭消息
+                    try:
+                        await websocket.close(code=4002, reason="Heartbeat timeout")
+                    except Exception:
+                        pass
                     break
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Keep-alive error for user {user_id}: {e}")
+            # 确保清理连接
+            ws_manager.disconnect(websocket)
     
     @staticmethod
     async def handle_client_message(websocket: WebSocket, message: dict, current_user: User):
