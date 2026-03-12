@@ -5,7 +5,8 @@
 import time
 import json
 import logging
-from typing import Any, Dict, Optional, Callable
+import random
+from typing import Any, Dict, Optional, Callable, List
 from threading import Lock
 from collections import OrderedDict
 from enum import Enum
@@ -91,12 +92,29 @@ class CacheBackend(str, Enum):
 
 class CacheEntry:
     """缓存条目（用于内存缓存）"""
-    def __init__(self, value: Any, ttl: int):
+    
+    # 雪崩保护抖动范围
+    AVALANCHE_JITTER_MIN = 0.9
+    AVALANCHE_JITTER_MAX = 1.1
+    
+    def __init__(self, value: Any, ttl: int, enable_avalanche_protection: bool = True):
         self.value = value
-        self.expire_at = time.time() + ttl if ttl > 0 else float('inf')
+        # 缓存雪崩保护：为 TTL 添加随机抖动
+        if enable_avalanche_protection and ttl > 0:
+            jitter = random.uniform(self.AVALANCHE_JITTER_MIN, self.AVALANCHE_JITTER_MAX)
+            actual_ttl = int(ttl * jitter)
+        else:
+            actual_ttl = ttl
+        self.expire_at = time.time() + actual_ttl if actual_ttl > 0 else float('inf')
+        self.original_ttl = ttl  # 记录原始 TTL
     
     def is_expired(self) -> bool:
         return time.time() > self.expire_at
+    
+    def get_remaining_ttl(self) -> int:
+        """获取剩余 TTL（秒）"""
+        remaining = self.expire_at - time.time()
+        return max(0, int(remaining))
 
 
 class MemoryCache:
@@ -658,6 +676,115 @@ class CacheManager:
         
         # 启动自动清理任务（仅内存缓存）
         await self._start_cleanup_task()
+        
+        # 预热缓存
+        await self.warmup_cache()
+    
+    def _get_ttl_with_jitter(self, ttl: int) -> int:
+        """
+        获取带随机抖动的 TTL，防止缓存雪崩
+        
+        为 TTL 添加 ±10% 的随机抖动，防止大量缓存在同一时间过期
+        
+        Args:
+            ttl: 原始 TTL（秒）
+            
+        Returns:
+            带抖动的 TTL（秒）
+        """
+        jitter = random.uniform(0.9, 1.1)
+        return int(ttl * jitter)
+    
+    async def warmup_cache(self) -> None:
+        """
+        预热缓存 - 启动时加载热门数据
+        
+        在服务启动时预热热门物品和价格数据缓存，减少冷启动影响
+        """
+        logger.info("Starting cache warmup...")
+        
+        try:
+            from app.core.database import engine
+            from sqlalchemy import select
+            from app.models.item import Item
+            
+            async with engine.connect() as conn:
+                # 预热热门物品缓存（按交易量排序的前20个）
+                popular_items_query = select(Item).order_by(Item.volume_24h.desc()).limit(20)
+                result = await conn.execute(popular_items_query)
+                popular_items = result.scalars().all()
+                
+                if popular_items:
+                    # 设置热门物品缓存，带随机抖动
+                    items_data = [
+                        {
+                            "id": item.id,
+                            "name": item.name,
+                            "current_price": item.current_price,
+                            "volume_24h": item.volume_24h
+                        }
+                        for item in popular_items
+                    ]
+                    ttl_with_jitter = self._get_ttl_with_jitter(ITEMS_CACHE_TTL)
+                    self.set(ITEMS_CACHE_KEY, items_data, ttl_with_jitter)
+                    logger.info(f"Warmed up popular items cache with {len(items_data)} items")
+                
+                # 预热价格数据缓存（热门物品的价格）
+                price_items_query = select(Item).order_by(Item.volume_24h.desc()).limit(50)
+                result = await conn.execute(price_items_query)
+                price_items = result.scalars().all()
+                
+                if price_items:
+                    price_data = {}
+                    for item in price_items:
+                        price_data[item.id] = {
+                            "price": item.current_price,
+                            "steam_price": item.steam_lowest_price,
+                            "updated_at": item.updated_at.isoformat() if item.updated_at else None
+                        }
+                    
+                    ttl_with_jitter = self._get_ttl_with_jitter(PRICE_CACHE_TTL)
+                    self.set("price:warmup", price_data, ttl_with_jitter)
+                    logger.info(f"Warmed up price cache with {len(price_data)} items")
+            
+            logger.info("Cache warmup completed")
+            
+        except Exception as e:
+            logger.warning(f"Cache warmup failed: {e}")
+        
+        # 缓存预热（可选）
+        await self.warmup_cache()
+    
+    async def warmup_cache(self) -> None:
+        """
+        缓存预热 - 启动时加载热门数据
+        
+        此方法在系统启动时自动调用，加载高频访问的数据到缓存，
+        避免冷启动时大量请求直接打到数据库。
+        
+        可扩展：从此方法可以调用外部服务获取热门物品、价格数据等
+        """
+        logger.info("Starting cache warm-up...")
+        try:
+            # 示例：预热热门物品缓存（实际数据源可根据业务需求配置）
+            # 这里预留扩展点，实际实现可以调用 items_service 获取热门物品
+            warmup_keys = [
+                ("popular_items", 600),  # 热门物品，10分钟
+                ("market_trends", 300),   # 市场趋势，5分钟
+                ("price_history", 300),   # 价格历史，5分钟
+            ]
+            
+            # 如果有外部数据源，可以在这里加载
+            # 示例：
+            # popular_items = await self._fetch_popular_items()
+            # for item in popular_items:
+            #     await self.aset(f"item:{item['id']}", item, 600)
+            
+            logger.info(f"Cache warm-up completed, prepared {len(warmup_keys)} cache keys")
+            
+        except Exception as e:
+            logger.warning(f"Cache warm-up failed: {e}")
+            # 预热失败不影响系统启动
     
     async def _start_cleanup_task(self) -> None:
         """启动后台清理任务（带重试机制）"""
@@ -773,9 +900,12 @@ class CacheManager:
     
     def set(self, key: str, value: Any, ttl: int = 300) -> None:
         """设置缓存值"""
+        # 添加 TTL 抖动防止缓存雪崩
+        ttl_with_jitter = self._get_ttl_with_jitter(ttl)
+        
         if self._current_backend == CacheBackend.REDIS and self._redis_cache:
             try:
-                self._redis_cache.set(key, value, ttl)
+                self._redis_cache.set(key, value, ttl_with_jitter)
                 return
             except Exception as e:
                 logger.error(f"Redis set failed, falling back to memory: {e}")
@@ -784,13 +914,16 @@ class CacheManager:
                 else:
                     raise
         
-        self._memory_cache.set(key, value, ttl)
+        self._memory_cache.set(key, value, ttl_with_jitter)
     
     async def aset(self, key: str, value: Any, ttl: int = 300) -> None:
         """异步设置缓存值"""
+        # 添加 TTL 抖动防止缓存雪崩
+        ttl_with_jitter = self._get_ttl_with_jitter(ttl)
+        
         if self._current_backend == CacheBackend.REDIS and self._redis_cache:
             try:
-                await self._redis_cache.aset(key, value, ttl)
+                await self._redis_cache.aset(key, value, ttl_with_jitter)
                 return
             except Exception as e:
                 logger.error(f"Redis async set failed, falling back to memory: {e}")
@@ -799,7 +932,7 @@ class CacheManager:
                 else:
                     raise
         
-        self._memory_cache.set(key, value, ttl)
+        self._memory_cache.set(key, value, ttl_with_jitter)
     
     def delete(self, key: str) -> bool:
         """删除缓存"""
