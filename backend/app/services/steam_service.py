@@ -44,6 +44,8 @@ class SteamAPI:
         self.base_url = "https://api.steampowered.com"
         self.market_url = "https://steamcommunity.com/market"
         self._session: Optional[aiohttp.ClientSession] = None
+        # 保存传入的timeout参数，用于创建session时使用
+        self._timeout = timeout or self.DEFAULT_TIMEOUT
         # 集成反爬虫管理器
         self._anti_crawler = get_anti_crawler()
     
@@ -91,14 +93,14 @@ class SteamAPI:
         if not await self.health_check():
             logger.info("Steam API Session 不健康，重新创建...")
             await self.close()
-            # 重新创建 session
-            self._session = aiohttp.ClientSession(timeout=self.DEFAULT_TIMEOUT)
+            # 重新创建 session，使用实例的timeout配置
+            self._session = aiohttp.ClientSession(timeout=self._timeout)
     
     @property
     def session(self) -> aiohttp.ClientSession:
         """获取或创建 session（延迟初始化）"""
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession(timeout=self.DEFAULT_TIMEOUT)
+            self._session = aiohttp.ClientSession(timeout=self._timeout)
         return self._session
     
     async def close(self):

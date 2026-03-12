@@ -3,9 +3,17 @@
 Steam 服务测试
 """
 import pytest
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 import aiohttp
 from app.services.steam_service import SteamAPI, SteamTrade, get_steam_api
+
+
+# 设置事件循环策略以避免警告
+@pytest.fixture(scope="session")
+def event_loop_policy():
+    """设置事件循环策略"""
+    return asyncio.get_event_loop_policy()
 
 
 class TestSteamAPI:
@@ -115,6 +123,7 @@ class TestSteamAPI:
     @pytest.mark.asyncio
     async def test_request_timeout(self):
         """测试请求超时"""
+        import asyncio
         api = SteamAPI()
 
         # 创建一个抛出TimeoutError的context manager
@@ -127,7 +136,9 @@ class TestSteamAPI:
         
         api.session.get = lambda *args, **kwargs: MockTimeoutContext()
 
-        with pytest.raises(asyncio.TimeoutError):
+        # 代码会捕获asyncio.TimeoutError并重新抛出SteamAPIError
+        from app.services.steam_service import SteamAPIError
+        with pytest.raises(SteamAPIError):
             await api._request("https://api.test.com/test")
 
         await api.close()
