@@ -321,8 +321,14 @@ class ArbitrageBot(TradingBotBase):
             # 2. 等待到账（简化处理，实际需要轮询）
             await asyncio.sleep(30)
             
-            # 3. 卖出（Steam）- 实际需要更复杂逻辑
-            sell_result = await self._sell_to_steam(item_id, steam_price)
+            # 3. 卖出（Steam）- 使用智能定价
+            # 不指定价格，让智能定价根据市场情况计算
+            sell_result = await self._sell_to_steam(
+                item_id=item_id,
+                price=None,  # 使用智能定价
+                item_name=item_name,
+                buy_price=buff_price
+            )
             
             # 记录交易
             trade_record = {
@@ -508,6 +514,182 @@ class ArbitrageBot(TradingBotBase):
         except Exception as e:
             self.logger.error(f"获取Steam库存失败: {e}")
             return []
+    
+    async def _calculate_smart_sell_price(
+        self,
+        item_id: int = None,
+        item_name: str = None,
+        buy_price: float = None,
+        target_profit_percent: float = 10.0
+    ) -> Dict[str, Any]:
+        """
+        智能卖出定价 - P1-1: 搬砖卖出流程智能定价
+        
+        考虑因素：
+        1. Buff 市场价格（成本价）
+        2. Steam 定价区间（最低价、最高价）
+        3. 目标利润率
+        4. 市场需求（挂单量）
+        
+        Args:
+            item_id: 物品ID
+            item_name: 物品名称
+            buy_price: 买入价格（成本）
+            target_profit_percent: 目标利润率（默认10%）
+            
+        Returns:
+            智能定价结果，包含推荐价格
+        """
+        try:
+            # 获取缓存价格
+            cache_key = f"smart_price:{item_id}"
+            cached = self._get_cache(cache_key)
+            if cached:
+                return cached
+            
+            # 1. 获取 Steam 市场价格数据
+            if not self._steam_api:
+                return {
+                    "success": False,
+                    "message": "Steam API 未初始化",
+                    "fallback_price": 0
+                }
+            
+            # 获取物品的 market_hash_name
+            market_hash_name = item_name
+            if not market_hash_name and item_id and self._db_session:
+                from sqlalchemy import select
+                from app.models.item import Item
+                result = await self._db_session.execute(
+                    select(Item).where(Item.id == item_id)
+                )
+                item = result.scalar_one_or_none()
+                if item:
+                    market_hash_name = item.market_hash_name
+            
+            if not market_hash_name:
+                return {
+                    "success": False,
+                    "message": "无法获取物品名称",
+                    "fallback_price": 0
+                }
+            
+            # 2. 获取 Steam 价格概览
+            steam_price_data = await self._steam_api.get_price_overview(market_hash_name)
+            
+            if not steam_price_data:
+                return {
+                    "success": False,
+                    "message": "无法获取 Steam 价格",
+                    "fallback_price": buy_price * 1.1 if buy_price else 0
+                }
+            
+            # 提取 Steam 价格信息
+            steam_lowest = self._parse_steam_price(steam_price_data.get("lowest_price", ""))
+            steam_highest = self._parse_steam_price(steam_price_data.get("highest_price", ""))
+            steam_volume = int(steam_price_data.get("volume", 0) or 0)
+            
+            # 3. 获取 Steam 挂单数据（市场需求）
+            listings_data = await self._steam_api.get_listings(market_hash_name)
+            
+            demand_score = 1.0  # 需求评分（0.5-1.5）
+            if listings_data and listings_data.get("orders"):
+                orders = listings_data["orders"]
+                # 计算买卖挂单比例
+                buy_orders = sum(1 for o in orders if o.get("type") == "buy")
+                sell_orders = sum(1 for o in orders if o.get("type") == "sell")
+                if sell_orders > 0:
+                    demand_score = min(1.5, max(0.5, buy_orders / sell_orders))
+            
+            # 4. 计算智能价格
+            # 基础价格：Steam 最低价（确保有竞争力）
+            base_price = steam_lowest
+            
+            # 成本价（买入价 + 手续费）
+            cost_price = buy_price * 1.02 if buy_price else 0  # 2% BUFF 手续费
+            
+            # 目标价格：成本价 + 目标利润
+            if cost_price > 0:
+                target_price = cost_price * (1 + target_profit_percent / 100)
+            else:
+                target_price = steam_lowest
+            
+            # 5. 综合定价策略
+            # 如果目标价低于最低价，说明无法达到目标利润，使用最低价
+            # 如果目标价在合理区间，使用目标价
+            # 如果目标价远高于最低价，说明市场有利，使用略低于最低价的价格快速卖出
+            
+            if target_price < steam_lowest * 0.95:
+                # 无法达到目标利润，使用最低价或略低快速卖出
+                recommended_price = steam_lowest * 0.98
+            elif target_price <= steam_lowest * 1.1:
+                # 在合理区间，使用目标价
+                recommended_price = target_price
+            else:
+                # 市场有利，使用略低于最低价的价格
+                recommended_price = steam_lowest * 0.99
+            
+            # 考虑需求评分调整
+            if demand_score < 0.8:
+                # 需求低，适当降价加速卖出
+                recommended_price *= 0.95
+            elif demand_score > 1.2:
+                # 需求高，可以适当提价
+                recommended_price *= min(1.05, steam_lowest / recommended_price + 0.02)
+            
+            # 确保价格有效
+            if recommended_price <= 0:
+                recommended_price = steam_lowest if steam_lowest > 0 else cost_price
+            
+            result = {
+                "success": True,
+                "recommended_price": round(recommended_price, 2),
+                "steam_lowest": steam_lowest,
+                "steam_highest": steam_highest,
+                "steam_volume": steam_volume,
+                "demand_score": round(demand_score, 2),
+                "cost_price": cost_price,
+                "target_profit": round(recommended_price - cost_price, 2) if cost_price > 0 else 0,
+                "profit_percent": round((recommended_price - cost_price) / cost_price * 100, 2) if cost_price > 0 else 0,
+            }
+            
+            # 缓存结果
+            self._set_cache(cache_key, result)
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"智能定价计算失败: {e}")
+            return {
+                "success": False,
+                "message": str(e),
+                "fallback_price": buy_price * 1.1 if buy_price else 0
+            }
+    
+    def _parse_steam_price(self, price_str: str) -> float:
+        """
+        解析 Steam 价格字符串
+        
+        Args:
+            price_str: 价格字符串，如 "¥120.00" 或 "$9.99"
+            
+        Returns:
+            价格数值
+        """
+        if not price_str:
+            return 0.0
+        
+        # 移除货币符号和空格
+        import re
+        # 匹配价格数字（支持多种货币格式）
+        match = re.search(r'[\d,]+\.?\d*', price_str.replace(',', ''))
+        if match:
+            try:
+                return float(match.group())
+            except ValueError:
+                return 0.0
+        
+        return 0.0
     
     async def _create_steam_listing(
         self,

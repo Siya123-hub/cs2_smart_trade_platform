@@ -211,8 +211,10 @@ class PriceMonitor:
             # 锁获取失败，作为备用节点 - 问题7：监控服务锁失败无降级
             logger.info(f"主节点锁获取失败，作为备用节点运行 (节点: {self.node_id})")
             self.running = True
-            # 备用节点执行有限任务（如只监听告警）
+            # 备用节点执行有限任务（监听告警和检查搬砖机会）
             self._background_tasks.append(asyncio.create_task(self.check_arbitrage()))
+            # 备用节点告警监听任务（只监听，不执行操作）
+            self._background_tasks.append(asyncio.create_task(self._backup_alert_listener()))
     
     async def _lock_renewal(self, lock: DistributedLock):
         """定期续期领导者锁"""
@@ -342,6 +344,60 @@ class PriceMonitor:
             
             # 每分钟检查一次
             await asyncio.sleep(60)
+    
+    async def _backup_alert_listener(self):
+        """
+        备用节点告警监听任务 - 问题7：监控服务锁失败无降级
+        
+        备用节点只执行监听任务，不执行实际操作。
+        监控 Redis 通道，接收主节点发送的告警通知。
+        """
+        logger.info(f"备用节点告警监听启动 (节点: {self.node_id})")
+        
+        while self.running:
+            try:
+                # 尝试从 Redis 订阅告警通道
+                redis = await self.get_redis()
+                
+                if redis:
+                    # 使用 Redis 订阅
+                    pubsub = redis.pubsub()
+                    await pubsub.subscribe("monitor:alerts")
+                    
+                    try:
+                        # 监听告警消息
+                        message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                        
+                        if message and message["type"] == "message":
+                            # 收到告警，触发回调
+                            alert_data = message["data"]
+                            
+                            # 尝试解析告警数据
+                            try:
+                                import json
+                                alerts = json.loads(alert_data)
+                                
+                                for callback in self.alert_callbacks:
+                                    try:
+                                        callback(alerts)
+                                        logger.info(f"备用节点收到并转发告警: {len(alerts) if isinstance(alerts, list) else 1} 条")
+                                    except Exception as e:
+                                        logger.error(f"告警回调错误: {e}")
+                            except json.JSONDecodeError:
+                                logger.warning(f"备用节点收到无效告警格式: {alert_data}")
+                                
+                    finally:
+                        await pubsub.unsubscribe("monitor:alerts")
+                        await pubsub.close()
+                else:
+                    # Redis 不可用，简单等待后重试
+                    await asyncio.sleep(10)
+                    
+            except Exception as e:
+                logger.error(f"备用节点告警监听异常: {e}")
+                await asyncio.sleep(5)  # 异常后短暂等待
+        
+        logger.info(f"备用节点告警监听停止 (节点: {self.node_id})")
     
     async def check_monitors(self, item: Item):
         """检查监控规则"""
