@@ -7,8 +7,11 @@ import hashlib
 import time
 import logging
 import random
+import json
+import os
 from typing import Optional, Dict, List, Any
 from datetime import datetime
+from pathlib import Path
 
 import aiohttp
 
@@ -28,7 +31,7 @@ class BuffAPICircuitOpen(BuffAPIError):
 
 
 class RetryState:
-    """重试状态追踪 - 问题8：缺乏请求重试状态追踪"""
+    """重试状态追踪 - 支持持久化"""
     
     def __init__(self, endpoint: str):
         self.endpoint = endpoint
@@ -37,6 +40,30 @@ class RetryState:
         self.failed_attempts = 0
         self.last_error: Optional[str] = None
         self.last_attempt_time: Optional[datetime] = None
+    
+    def to_dict(self) -> dict:
+        """转换为字典用于持久化"""
+        return {
+            "endpoint": self.endpoint,
+            "total_attempts": self.total_attempts,
+            "successful_attempts": self.successful_attempts,
+            "failed_attempts": self.failed_attempts,
+            "last_error": self.last_error,
+            "last_attempt_time": self.last_attempt_time.isoformat() if self.last_attempt_time else None
+        }
+    
+    @classmethod
+    def from_dict(cls, data: dict) -> 'RetryState':
+        """从字典加载"""
+        state = cls(data.get("endpoint", ""))
+        state.total_attempts = data.get("total_attempts", 0)
+        state.successful_attempts = data.get("successful_attempts", 0)
+        state.failed_attempts = data.get("failed_attempts", 0)
+        state.last_error = data.get("last_error")
+        last_time = data.get("last_attempt_time")
+        if last_time:
+            state.last_attempt_time = datetime.fromisoformat(last_time)
+        return state
 
 
 async def _exponential_backoff_with_jitter(
@@ -100,7 +127,7 @@ class BuffAPI:
         return self._retry_states[endpoint]
     
     def get_retry_stats(self) -> Dict[str, Any]:
-        """获取重试统计 - 问题8"""
+        """获取重试统计"""
         return {
             endpoint: {
                 "total": state.total_attempts,
@@ -113,6 +140,47 @@ class BuffAPI:
             }
             for endpoint, state in self._retry_states.items()
         }
+    
+    def _get_retry_state_file(self) -> Path:
+        """获取重试状态文件路径"""
+        data_dir = Path("data")
+        data_dir.mkdir(exist_ok=True)
+        return data_dir / "buff_retry_stats.json"
+    
+    def save_retry_stats(self) -> bool:
+        """保存重试状态到文件（持久化）"""
+        try:
+            stats_file = self._get_retry_state_file()
+            stats_data = {
+                endpoint: state.to_dict()
+                for endpoint, state in self._retry_states.items()
+            }
+            with open(stats_file, 'w', encoding='utf-8') as f:
+                json.dump(stats_data, f, indent=2, ensure_ascii=False)
+            logger.info(f"重试统计已保存到 {stats_file}")
+            return True
+        except Exception as e:
+            logger.error(f"保存重试统计失败: {e}")
+            return False
+    
+    def load_retry_stats(self) -> bool:
+        """从文件加载重试状态"""
+        try:
+            stats_file = self._get_retry_state_file()
+            if not stats_file.exists():
+                return False
+            
+            with open(stats_file, 'r', encoding='utf-8') as f:
+                stats_data = json.load(f)
+            
+            for endpoint, data in stats_data.items():
+                self._retry_states[endpoint] = RetryState.from_dict(data)
+            
+            logger.info(f"从 {stats_file} 加载了 {len(stats_data)} 个端点的重试统计")
+            return True
+        except Exception as e:
+            logger.error(f"加载重试统计失败: {e}")
+            return False
     
     async def close(self):
         """关闭会话"""

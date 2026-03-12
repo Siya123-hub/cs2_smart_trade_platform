@@ -44,10 +44,50 @@ class TradingEngine:
         self.steam_api = get_steam_api()
         self.steam_market = get_steam_market_service()
         self._task_registry = get_task_registry()
+        # 导入通知服务
+        from app.services.notification_service import NotificationService, NotificationType, NotificationPriority
+        self.notification_service = NotificationService()
+        self.notification_type = NotificationType
+        self.notification_priority = NotificationPriority
     
     def set_buff_client(self, cookie: str):
         """设置 BUFF 客户端"""
         self.buff_client = get_buff_client(cookie)
+    
+    async def _notify_sell_failure(
+        self,
+        user_id: int,
+        item_id: int,
+        buy_order_id: str,
+        error_message: str
+    ):
+        """卖出失败时发送告警通知"""
+        try:
+            # 查询物品信息
+            result = await self.db.execute(
+                select(Item).where(Item.id == item_id)
+            )
+            item = result.scalar_one_or_none()
+            item_name = item.name if item else f"ID: {item_id}"
+            
+            # 发送告警通知
+            await self.notification_service.send_notification(
+                user_id=user_id,
+                notification_type=self.notification_type.TRADE,
+                title="卖出订单失败告警",
+                content=f"买入订单 {buy_order_id} 的物品 {item_name} 卖出失败: {error_message}",
+                priority=self.notification_priority.HIGH,
+                data={
+                    "buy_order_id": buy_order_id,
+                    "item_id": item_id,
+                    "item_name": item_name,
+                    "error": error_message,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            )
+            logger.warning(f"已发送卖出失败告警: buy_order_id={buy_order_id}, item={item_name}, error={error_message}")
+        except Exception as e:
+            logger.error(f"发送卖出失败告警失败: {e}")
     
     async def get_arbitrage_opportunities(
         self,
@@ -364,6 +404,8 @@ class TradingEngine:
                         
                 except Exception as e:
                     logger.error(f"卖出流程异常: {e}")
+                    # 卖出失败时发送告警通知
+                    await self._notify_sell_failure(user_id, item_id, buy_order_id, str(e))
                     sell_result = ServiceResponse.ok(
                         data={
                             "buy_order_id": buy_order_id,

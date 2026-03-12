@@ -8,6 +8,8 @@ from app.api.v1.endpoints import (
     auth, items, orders, inventory, monitors, bots, stats, monitoring, market
 )
 
+# 注意: v1 router 会包含在主 router (/api) 中，所以这里不再添加 /api 前缀
+# API_V1_PREFIX 配置已不再需要，前缀由 main.py 的 router 统一管理
 router = APIRouter()
 
 # 注册各模块路由

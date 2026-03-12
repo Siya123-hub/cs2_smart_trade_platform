@@ -92,7 +92,10 @@ def create_api_router():
     router = APIRouter(prefix="/api")
     
     # 导入并注册 v1 路由
-    from app.api.v1 import router as v1_router
+    from app.api.v1 import router as v1_routes
+    # 创建带 prefix 的 v1 路由器并注册
+    v1_router = APIRouter(prefix="/v1")
+    v1_router.include_router(v1_routes)
     router.include_router(v1_router, tags=["v1"])
     
     # 导入并注册 v2 路由
