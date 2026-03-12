@@ -304,6 +304,69 @@ class RedisCache:
             self._redis = None
             self._connected = False
     
+    async def acquire_lock(
+        self, 
+        key: str, 
+        timeout: int = 10,
+        expire: int = 30
+    ) -> bool:
+        """
+        获取分布式锁（用于缓存击穿保护）
+        
+        Args:
+            key: 锁的键
+            timeout: 获取锁的超时时间（秒）
+            expire: 锁的过期时间（秒）
+            
+        Returns:
+            是否成功获取锁
+        """
+        if not self._connected:
+            return False
+        
+        try:
+            redis = self._get_redis()
+            if redis is None:
+                return False
+            
+            lock_key = f"lock:{key}"
+            # 使用 SETNX 实现分布式锁
+            acquired = await redis.set(
+                lock_key,
+                "1",
+                nx=True,
+                ex=expire
+            )
+            return bool(acquired)
+        except Exception as e:
+            logger.error(f"Failed to acquire distributed lock: {e}")
+            return False
+    
+    async def release_lock(self, key: str) -> bool:
+        """
+        释放分布式锁
+        
+        Args:
+            key: 锁的键
+            
+        Returns:
+            是否成功释放锁
+        """
+        if not self._connected:
+            return False
+        
+        try:
+            redis = self._get_redis()
+            if redis is None:
+                return False
+            
+            lock_key = f"lock:{key}"
+            await redis.delete(lock_key)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to release distributed lock: {e}")
+            return False
+    
     async def aget(self, key: str, default: Any = None) -> Optional[Any]:
         """异步获取缓存值"""
         if not self._connected:
@@ -492,6 +555,64 @@ class CacheManager:
         
         # 自动清理定时器（仅内存缓存）
         self._cleanup_task = None
+        
+        # 缓存击穿保护 - 异步锁字典（每个key一个锁）
+        self._cache_locks: Dict[str, asyncio.Lock] = {}
+        self._locks_lock = asyncio.Lock()
+    
+    async def _get_cache_lock(self, key: str) -> asyncio.Lock:
+        """获取指定key的锁（缓存击穿保护）"""
+        async with self._locks_lock:
+            if key not in self._cache_locks:
+                self._cache_locks[key] = asyncio.Lock()
+            return self._cache_locks[key]
+    
+    async def aget_with_protection(
+        self, 
+        key: str, 
+        default: Any = None,
+        fetch_callback: Optional[Callable] = None,
+        ttl: int = 300
+    ) -> Any:
+        """
+        带击穿保护的异步获取缓存值
+        
+        当缓存不存在时，使用互斥锁防止缓存击穿（大量请求同时访问不存在的缓存键）
+        
+        Args:
+            key: 缓存键
+            default: 默认值
+            fetch_callback: 获取数据的回调函数（可选），用于缓存不存在时加载数据
+            ttl: 缓存过期时间（秒）
+            
+        Returns:
+            缓存值或默认值
+        """
+        # 先尝试直接获取缓存
+        cached_value = await self.aget(key)
+        if cached_value is not None:
+            return cached_value
+        
+        # 缓存不存在，获取锁并防止击穿
+        lock = await self._get_cache_lock(key)
+        async with lock:
+            # 双重检查：获取锁后再检查一次缓存（可能其他请求已经加载了）
+            cached_value = await self.aget(key)
+            if cached_value is not None:
+                return cached_value
+            
+            # 缓存确实不存在，如果提供了回调函数，则加载数据
+            if fetch_callback:
+                try:
+                    value = await fetch_callback()
+                    # 设置缓存
+                    await self.aset(key, value, ttl)
+                    return value
+                except Exception as e:
+                    logger.error(f"Failed to fetch data for cache key {key}: {e}")
+                    return default
+            
+            return default
     
     async def initialize(self, max_retries: int = 3, retry_delay: float = 1.0) -> None:
         """

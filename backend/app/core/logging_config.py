@@ -40,7 +40,7 @@ SENSITIVE_PATTERNS = {
 }
 
 # 需要完全屏蔽的字段(不显示任何内容)
-BLOCKED_FIELDS = {"password", "steam_cookie", "buff_cookie", "mafile", "token", "api_key", "steam_api_key", "secret"}
+BLOCKED_FIELDS = {"password", "steam_cookie", "buff_cookie", "mafile", "token", "api_key", "steam_api_key", "secret", "access_token"}
 
 
 class SensitiveDataFilter(logging.Filter):
@@ -77,9 +77,21 @@ class SensitiveDataFilter(logging.Filter):
         
         # 1. 屏蔽特定字段
         for field in self._sensitive_fields:
-            # 匹配 "field": "value" 或 "field": "value"
-            pattern = re.compile(rf'("{field}"["\s:=]+)[^\s,}}"{{]+', re.IGNORECASE)
-            result = pattern.sub(rf'\1"***"', result)
+            # 处理 JSON 对象格式: {"password": "value"} -> 去除空格 -> "password":"***"
+            # 处理带引号格式: "password": "value" -> 保留空格 -> "password": "***"
+            
+            # 先处理 JSON 对象格式 (有花括号)
+            pattern1 = re.compile(rf'\{{\s*("{field}")\s*:\s*"[^"]*"\s*\}}', re.IGNORECASE)
+            result = pattern1.sub(rf'{{\1:"***"}}', result)
+            
+            # 处理带引号格式 (捕获空格)
+            pattern2 = re.compile(rf'("{field}")(\s*:\s*)"[^"]*"', re.IGNORECASE)
+            result = pattern2.sub(rf'\1\2"***"', result)
+            
+            # 再处理非 JSON 格式 (key 无引号)
+            # 匹配 field=value 或 field: value 格式
+            pattern3 = re.compile(rf'({field}\s*[=:]\s*)[^\s,}}"{{}}]+', re.IGNORECASE)
+            result = pattern3.sub(r'\1***', result)
         
         # 2. 替换匹配到的敏感模式
         for name, pattern in SENSITIVE_PATTERNS.items():
@@ -89,6 +101,7 @@ class SensitiveDataFilter(logging.Filter):
             # 替换为脱敏版本
             def replace_func(match):
                 prefix = match.group(1)
+                # 保持原有格式，去除多余空格
                 return prefix + "***"
             
             result = pattern.sub(replace_func, result)

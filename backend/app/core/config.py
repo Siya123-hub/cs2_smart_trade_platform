@@ -5,6 +5,7 @@
 import os
 import json
 import logging
+import threading
 from functools import lru_cache
 from typing import Optional, Dict, Callable, List
 from pathlib import Path
@@ -17,13 +18,15 @@ logger = logging.getLogger(__name__)
 
 
 class ConfigReloader:
-    """配置热重载管理器"""
+    """配置热重载管理器（线程安全版本）"""
     
     def __init__(self, config_file: str = ".env"):
         self._config_file = config_file
         self._subscribers: List[Callable[[], None]] = []
         self._last_mtime: float = 0
         self._settings_instance: Optional['Settings'] = None
+        # 线程锁，确保并发安全
+        self._lock = threading.RLock()
     
     def watch(self, settings_instance: 'Settings'):
         """开始监听配置变化"""
@@ -33,37 +36,39 @@ class ConfigReloader:
             self._last_mtime = config_path.stat().st_mtime
     
     def check_and_reload(self) -> bool:
-        """检查并重载配置（需手动调用或配合定时任务）"""
-        config_path = Path(self._config_file)
-        if not config_path.exists():
+        """检查并重载配置（需手动调用或配合定时任务，线程安全）"""
+        with self._lock:
+            config_path = Path(self._config_file)
+            if not config_path.exists():
+                return False
+            
+            current_mtime = config_path.stat().st_mtime
+            if current_mtime > self._last_mtime:
+                logger.info(f"检测到配置文件变化: {self._config_file}")
+                self._last_mtime = current_mtime
+                
+                # 清除缓存
+                get_settings.cache_clear()
+                
+                # 重新加载
+                new_settings = get_settings()
+                
+                # 通知订阅者
+                for callback in self._subscribers:
+                    try:
+                        callback()
+                    except Exception as e:
+                        logger.error(f"配置变更回调错误: {e}")
+                
+                logger.info("配置已热重载")
+                return True
+            
             return False
-        
-        current_mtime = config_path.stat().st_mtime
-        if current_mtime > self._last_mtime:
-            logger.info(f"检测到配置文件变化: {self._config_file}")
-            self._last_mtime = current_mtime
-            
-            # 清除缓存
-            get_settings.cache_clear()
-            
-            # 重新加载
-            new_settings = get_settings()
-            
-            # 通知订阅者
-            for callback in self._subscribers:
-                try:
-                    callback()
-                except Exception as e:
-                    logger.error(f"配置变更回调错误: {e}")
-            
-            logger.info("配置已热重载")
-            return True
-        
-        return False
     
     def subscribe(self, callback: Callable[[], None]):
-        """订阅配置变更"""
-        self._subscribers.append(callback)
+        """订阅配置变更（线程安全）"""
+        with self._lock:
+            self._subscribers.append(callback)
 
 
 # 全局配置重载器
@@ -122,7 +127,7 @@ class Settings(BaseSettings):
     # 订单确认配置
     ORDER_CONFIRM_CHECK_INTERVAL: int = 5   # 订单确认检查间隔（秒）
     ORDER_CONFIRM_TIMEOUT: int = 300        # 订单确认超时（秒）
-    ORDER_POLL_RETRIES: int = 60            # 订单轮询最大次数
+    ORDER_POLL_RETRIES: int = 10            # 订单轮询最大次数
 
     # 登录限制配置
     LOGIN_MAX_ATTEMPTS: int = 5  # 最大登录尝试次数
@@ -134,6 +139,26 @@ class Settings(BaseSettings):
     RATE_LIMIT_DEFAULT_WINDOW: int = 60  # 默认窗口（秒）
     RATE_LIMIT_DEFAULT_BURST: int = 10  # 默认突发限制
     TESTING: bool = Field(default=False)  # 测试模式标志
+
+    # WebSocket 配置
+    WS_HEARTBEAT_INTERVAL: int = Field(default=30, description="WebSocket 心跳间隔（秒）")
+    WS_HEARTBEAT_TIMEOUT: int = Field(default=10, description="WebSocket 心跳超时（秒）")
+    WS_MAX_FAILURES: int = Field(default=3, description="WebSocket 最大失败次数")
+    WS_RECONNECT_DELAY: int = Field(default=5, description="WebSocket 重连延迟（秒）")
+    WS_TOKEN_EXPIRY_WARNING: int = Field(default=300, description="Token 过期警告时间（秒）")
+
+    # Steam 配置
+    STEAM_APP_ID: int = Field(default=730, description="Steam 应用ID (CS2=730)")
+    STEAM_CONTEXT_ID: int = Field(default=2, description="Steam 市场上下文ID")
+
+    # 数据库配置
+    DB_BUSY_TIMEOUT: int = Field(default=30000, description="SQLite busy_timeout（毫秒）")
+    DB_POOL_RECYCLE: int = Field(default=3600, description="数据库连接池回收时间（秒）")
+    DB_POOL_TIMEOUT: int = Field(default=30, description="数据库连接池超时（秒）")
+
+    # 缓存配置
+    CACHE_CLEANUP_INTERVAL: int = Field(default=300, description="缓存清理间隔（秒）")
+    RESPONSE_TIME_TTL: int = Field(default=300, description="响应时间缓存 TTL（秒）")
     
     # 限流端点配置（字典格式，支持热重载）
     RATE_LIMIT_ENDPOINTS: Dict = Field(default_factory=lambda: {

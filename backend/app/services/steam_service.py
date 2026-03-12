@@ -271,7 +271,7 @@ class SteamAPI:
             logger.warning(f"获取价格直方图失败: {market_hash_name}, 错误: {e}")
             return None
     
-    # ========== 问题6：Steam卖出功能实现 ==========
+    # ========== Steam卖出功能实现 ==========
     
     async def get_inventory(
         self,
@@ -280,7 +280,7 @@ class SteamAPI:
         context_id: int = 2
     ) -> Dict[str, Any]:
         """
-        获取Steam库存 - 问题6：Steam卖出功能支持
+        获取Steam库存 - Steam卖出功能支持
         
         Args:
             steam_id: Steam用户ID（自己的库存可以不传）
@@ -317,7 +317,7 @@ class SteamAPI:
         session_token: str = None
     ) -> Dict[str, Any]:
         """
-        创建Steam市场挂单 - 问题6：Steam卖出功能
+        创建Steam市场挂单 - Steam卖出功能
         
         注意：此功能需要完整的Cookie认证，请使用 SteamTrade 类
         
@@ -380,24 +380,52 @@ class SteamTrade:
         app_id: int = 730,
         context_id: int = 2
     ) -> List[Dict[str, Any]]:
-        """获取库存"""
-        if not self.is_logged_in:
-            raise Exception("未登录 Steam")
+        """
+        获取库存
         
-        # 实际实现需要调用 Steam API
-        return []
+        注意：此功能需要完整的 Steam 认证（SteamKit2）
+        
+        Args:
+            app_id: Steam App ID
+            context_id: 库存上下文 ID
+            
+        Returns:
+            库存物品列表
+            
+        Raises:
+            NotImplementedError: 尚未实现，需要集成 SteamKit2
+        """
+        # 实际实现需要使用 SteamKit2 库进行认证
+        raise NotImplementedError(
+            "获取库存功能需要完整的 Steam 认证支持。"
+            "请使用 steam_market_service.get_my_inventory() 或集成 SteamKit2 库。"
+        )
     
     async def get_trade_offers(
         self,
         get_received: bool = True,
         get_sent: bool = False
     ) -> List[Dict[str, Any]]:
-        """获取交易报价"""
-        if not self.is_logged_in:
-            raise Exception("未登录 Steam")
+        """
+        获取交易报价
         
-        # 实际实现需要调用 Steam API
-        return []
+        注意：此功能需要完整的 Steam 认证（SteamKit2）
+        
+        Args:
+            get_received: 是否获取收到的报价
+            get_sent: 是否获取发送的报价
+            
+        Returns:
+            交易报价列表
+            
+        Raises:
+            NotImplementedError: 尚未实现，需要集成 SteamKit2
+        """
+        # 实际实现需要调用 Steam API / IEconService/GetTradeOffers
+        raise NotImplementedError(
+            "获取交易报价功能需要完整的 Steam 认证支持。"
+            "请集成 SteamKit2 库。"
+        )
     
     async def create_trade_offer(
         self,
@@ -406,28 +434,70 @@ class SteamTrade:
         items_to_receive: List[Dict] = None,
         message: str = ""
     ) -> Optional[str]:
-        """创建交易报价"""
-        if not self.is_logged_in:
-            raise Exception("未登录 Steam")
+        """
+        创建交易报价
         
-        # 实际实现需要调用 Steam API
-        return None
+        注意：此功能需要完整的 Steam 认证（SteamKit2）
+        
+        Args:
+            partner_steam_id: 交易对方 Steam ID
+            items_to_give: 要给出的物品
+            items_to_receive: 要接收的物品
+            message: 留言
+            
+        Returns:
+            交易报价 ID
+            
+        Raises:
+            NotImplementedError: 尚未实现，需要集成 SteamKit2
+        """
+        # 实际实现需要调用 Steam API / IEconService/SendTradeOffer
+        raise NotImplementedError(
+            "创建交易报价功能需要完整的 Steam 认证支持。"
+            "请集成 SteamKit2 库。"
+        )
     
     async def accept_trade_offer(self, trade_offer_id: str) -> bool:
-        """接受交易报价"""
-        if not self.is_logged_in:
-            raise Exception("未登录 Steam")
+        """
+        接受交易报价
         
+        注意：此功能需要完整的 Steam 认证（SteamKit2）
+        
+        Args:
+            trade_offer_id: 交易报价 ID
+            
+        Returns:
+            是否成功
+            
+        Raises:
+            NotImplementedError: 尚未实现，需要集成 SteamKit2
+        """
         # 实际实现需要调用 Steam API
-        return True
+        raise NotImplementedError(
+            "接受交易报价功能需要完整的 Steam 认证支持。"
+            "请集成 SteamKit2 库。"
+        )
     
     async def decline_trade_offer(self, trade_offer_id: str) -> bool:
-        """拒绝交易报价"""
-        if not self.is_logged_in:
-            raise Exception("未登录 Steam")
+        """
+        拒绝交易报价
         
+        注意：此功能需要完整的 Steam 认证（SteamKit2）
+        
+        Args:
+            trade_offer_id: 交易报价 ID
+            
+        Returns:
+            是否成功
+            
+        Raises:
+            NotImplementedError: 尚未实现，需要集成 SteamKit2
+        """
         # 实际实现需要调用 Steam API
-        return True
+        raise NotImplementedError(
+            "拒绝交易报价功能需要完整的 Steam 认证支持。"
+            "请集成 SteamKit2 库。"
+        )
 
     # ========== Steam 市场挂单功能 ==========
     

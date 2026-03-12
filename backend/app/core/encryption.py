@@ -93,13 +93,17 @@ class EncryptionManager:
     def decrypt(self, encrypted_data: str) -> str:
         """解密字符串
         
+        Returns:
+            str: 解密后的字符串，空数据返回空字符串
+            
         Raises:
-            DecryptionError: 解密失败时抛出异常
+            DecryptionError: 解密失败时抛出异常（仅非空数据解密失败时）
         """
         if not self._fernet:
             self.initialize()
+        # 优雅处理空数据：返回空字符串而非抛出异常
         if not encrypted_data:
-            raise DecryptionError("加密数据为空")
+            return ""
         try:
             return self._fernet.decrypt(encrypted_data.encode()).decode()
         except Exception as e:

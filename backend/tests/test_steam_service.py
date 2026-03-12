@@ -295,20 +295,18 @@ class TestSteamTrade:
 
     @pytest.mark.asyncio
     async def test_get_inventory_not_logged_in(self):
-        """测试未登录时获取库存"""
+        """测试未登录时获取库存 - 抛出NotImplementedError"""
         trade = SteamTrade(
             steam_id="123456789",
             session_token="test_token"
         )
 
-        with pytest.raises(Exception) as exc_info:
+        with pytest.raises(NotImplementedError):
             await trade.get_inventory()
-
-        assert "未登录" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_get_inventory_logged_in(self):
-        """测试登录后获取库存"""
+        """测试登录后获取库存 - 抛出NotImplementedError（需要SteamKit2）"""
         trade = SteamTrade(
             steam_id="123456789",
             session_token="test_token"
@@ -316,25 +314,24 @@ class TestSteamTrade:
 
         await trade.login()
 
-        # 当前实现返回空列表
-        result = await trade.get_inventory()
-
-        assert result == []
+        # 当前实现抛出NotImplementedError（需要SteamKit2）
+        with pytest.raises(NotImplementedError):
+            await trade.get_inventory()
 
     @pytest.mark.asyncio
     async def test_get_trade_offers_not_logged_in(self):
-        """测试未登录时获取报价"""
+        """测试未登录时获取报价 - 抛出NotImplementedError"""
         trade = SteamTrade(
             steam_id="123456789",
             session_token="test_token"
         )
 
-        with pytest.raises(Exception):
+        with pytest.raises(NotImplementedError):
             await trade.get_trade_offers()
 
     @pytest.mark.asyncio
     async def test_get_trade_offers_logged_in(self):
-        """测试登录后获取报价"""
+        """测试登录后获取报价 - 抛出NotImplementedError（需要SteamKit2）"""
         trade = SteamTrade(
             steam_id="123456789",
             session_token="test_token"
@@ -342,35 +339,35 @@ class TestSteamTrade:
 
         await trade.login()
 
-        result = await trade.get_trade_offers()
-
-        assert result == []
+        # 当前实现抛出NotImplementedError（需要SteamKit2）
+        with pytest.raises(NotImplementedError):
+            await trade.get_trade_offers()
 
     @pytest.mark.asyncio
     async def test_create_trade_offer_not_logged_in(self):
-        """测试未登录时创建报价"""
+        """测试未登录时创建报价 - 抛出NotImplementedError"""
         trade = SteamTrade(
             steam_id="123456789",
             session_token="test_token"
         )
 
-        with pytest.raises(Exception):
+        with pytest.raises(NotImplementedError):
             await trade.create_trade_offer("partner_id")
 
     @pytest.mark.asyncio
     async def test_accept_trade_offer_not_logged_in(self):
-        """测试未登录时接受报价"""
+        """测试未登录时接受报价 - 抛出NotImplementedError"""
         trade = SteamTrade(
             steam_id="123456789",
             session_token="test_token"
         )
 
-        with pytest.raises(Exception):
+        with pytest.raises(NotImplementedError):
             await trade.accept_trade_offer("offer_id")
 
     @pytest.mark.asyncio
     async def test_accept_trade_offer_logged_in(self):
-        """测试登录后接受报价"""
+        """测试登录后接受报价 - 抛出NotImplementedError（需要SteamKit2）"""
         trade = SteamTrade(
             steam_id="123456789",
             session_token="test_token"
@@ -378,13 +375,13 @@ class TestSteamTrade:
 
         await trade.login()
 
-        result = await trade.accept_trade_offer("offer_id")
-
-        assert result is True
+        # 当前实现抛出NotImplementedError（需要SteamKit2）
+        with pytest.raises(NotImplementedError):
+            await trade.accept_trade_offer("offer_id")
 
     @pytest.mark.asyncio
     async def test_decline_trade_offer_logged_in(self):
-        """测试登录后拒绝报价"""
+        """测试登录后拒绝报价 - 抛出NotImplementedError"""
         trade = SteamTrade(
             steam_id="123456789",
             session_token="test_token"
@@ -392,9 +389,21 @@ class TestSteamTrade:
 
         await trade.login()
 
-        result = await trade.decline_trade_offer("offer_id")
+        with pytest.raises(NotImplementedError):
+            await trade.decline_trade_offer("offer_id")
+    
+    @pytest.mark.asyncio
+    async def test_decline_trade_offer_logged_in_2(self):
+        """测试登录后拒绝报价 - 抛出NotImplementedError"""
+        trade = SteamTrade(
+            steam_id="123456789",
+            session_token="test_token"
+        )
 
-        assert result is True
+        await trade.login()
+
+        with pytest.raises(NotImplementedError):
+            await trade.decline_trade_offer("offer_id")
 
 
 class TestGetSteamAPI:

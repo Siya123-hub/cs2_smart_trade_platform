@@ -7,6 +7,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, status, Query, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
+from sqlalchemy.orm import selectinload
 from datetime import datetime
 
 from app.core.database import get_db
@@ -47,7 +48,10 @@ async def get_monitors(
     db: AsyncSession = Depends(get_db)
 ):
     """获取监控任务列表"""
-    query = select(MonitorTask).where(MonitorTask.user_id == current_user.id)
+    # 预加载关联数据避免 N+1 查询
+    query = select(MonitorTask).where(MonitorTask.user_id == current_user.id).options(
+        selectinload(MonitorTask.user)
+    )
     
     if enabled is not None:
         query = query.where(MonitorTask.enabled == enabled)

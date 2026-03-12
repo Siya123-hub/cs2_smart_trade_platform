@@ -13,8 +13,11 @@ from sqlalchemy.pool import StaticPool
 import pytest_asyncio
 
 # 设置环境变量在导入app之前
-os.environ["RATE_LIMIT_ENABLED"] = "false"
+os.environ["DEBUG"] = "false"
+os.environ["RATE_LIMIT_ENABLED"] = "true"
 os.environ["TESTING"] = "true"
+os.environ["SECRET_KEY"] = "test-secret-key-for-testing-only-change-in-production"
+os.environ["ENCRYPTION_KEY"] = "test-encryption-key-for-testing-only"
 
 
 # 测试数据库 URL

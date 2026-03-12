@@ -33,8 +33,8 @@ class OrderBase(BaseModel):
     """订单基础"""
     item_id: int
     side: OrderSide
-    price: float = Field(..., gt=0)
-    quantity: int = Field(default=1, ge=1)
+    price: float = Field(..., gt=0, le=10000)  # 价格必须 > 0，最大 10000
+    quantity: int = Field(default=1, ge=1, le=100)  # 数量必须 >= 1 <= 100
 
 
 class OrderCreate(OrderBase):

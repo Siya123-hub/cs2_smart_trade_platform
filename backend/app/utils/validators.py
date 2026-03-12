@@ -25,12 +25,13 @@ MAX_EMAIL_LENGTH = 255
 
 # ============ 验证函数 ============
 
-def validate_price(price: Any) -> float:
+def validate_price(price: Any, field_name: str = "price") -> float:
     """
     验证价格
     
     Args:
         price: 价格值
+        field_name: 字段名称（用于错误消息）
     
     Returns:
         验证通过的价格（float）
@@ -43,19 +44,19 @@ def validate_price(price: Any) -> float:
         try:
             price = float(price)
         except (ValueError, TypeError):
-            raise ValueError(f"价格必须是数字类型，无法转换为浮点数: {price}")
+            raise ValueError(f"{field_name}必须是数字类型，无法转换为浮点数: {price}")
     
     if not isinstance(price, (int, float, Decimal)):
-        raise ValueError(f"价格必须是数字类型，当前类型: {type(price).__name__}")
+        raise ValueError(f"{field_name}必须是数字类型，当前类型: {type(price).__name__}")
     
     # 转换为浮点数
     price = float(price)
     
     # 范围检查
     if price < MIN_PRICE:
-        raise ValueError(f"价格不能低于 {MIN_PRICE}")
+        raise ValueError(f"{field_name}不能低于 {MIN_PRICE}")
     if price > MAX_PRICE:
-        raise ValueError(f"价格不能超过 {MAX_PRICE}")
+        raise ValueError(f"{field_name}不能超过 {MAX_PRICE}")
     
     return round(price, 2)
 

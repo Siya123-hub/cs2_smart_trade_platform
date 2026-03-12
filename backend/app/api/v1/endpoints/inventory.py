@@ -2,15 +2,21 @@
 """
 库存端点
 """
+import json
 import logging
 from typing import List, Optional
-from fastapi import APIRouter, Depends, status, Query, HTTPException
+from fastapi import APIRouter, Depends, status, Query, HTTPException, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, update, and_
 from datetime import datetime
 
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.core.idempotency import (
+    generate_idempotency_key,
+    check_idempotency,
+    save_idempotent_response,
+)
 from app.models.user import User
 from app.models.inventory import Inventory, Listing
 from app.schemas.inventory import (
@@ -63,9 +69,23 @@ async def get_inventory(
 @router.post("/sync", response_model=SyncInventoryResponse)
 async def sync_inventory(
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")
 ):
-    """同步 Steam 库存"""
+    """同步 Steam 库存（支持幂等性）"""
+    # 幂等性检查
+    if idempotency_key:
+        internal_key = generate_idempotency_key(
+            user_id=current_user.id,
+            method="POST",
+            path="/api/v1/inventory/sync",
+            request_body=idempotency_key
+        )
+        is_duplicate, cached_response = await check_idempotency(internal_key)
+        if is_duplicate and cached_response:
+            logger.info(f"检测到重复库存同步请求，key: {idempotency_key}")
+            return SyncInventoryResponse(**cached_response)
+    
     # 实现实际的 Steam 库存同步逻辑
     try:
         # 获取用户的所有机器人
@@ -128,13 +148,19 @@ async def sync_inventory(
         
         await db.commit()
         
-        return SyncInventoryResponse(
-            success=True,
-            message="库存同步完成",
-            added_count=added_count,
-            updated_count=updated_count,
-            removed_count=removed_count
-        )
+        response_data = {
+            "success": True,
+            "message": "库存同步完成",
+            "added_count": added_count,
+            "updated_count": updated_count,
+            "removed_count": removed_count
+        }
+        
+        # 保存幂等性响应
+        if idempotency_key:
+            await save_idempotent_response(internal_key, response_data)
+        
+        return SyncInventoryResponse(**response_data)
         
     except Exception as e:
         raise HTTPException(
@@ -147,9 +173,24 @@ async def sync_inventory(
 async def list_item(
     listing_data: ListingCreate,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")
 ):
-    """上架饰品"""
+    """上架饰品（支持幂等性）"""
+    # 幂等性检查
+    if idempotency_key:
+        request_body = json.dumps(listing_data.model_dump(), sort_keys=True)
+        internal_key = generate_idempotency_key(
+            user_id=current_user.id,
+            method="POST",
+            path="/api/v1/inventory/list",
+            request_body=request_body
+        )
+        is_duplicate, cached_response = await check_idempotency(internal_key)
+        if is_duplicate and cached_response:
+            logger.info(f"检测到重复上架请求，key: {idempotency_key}")
+            return ListingResponse(**cached_response)
+    
     # 验证库存是否存在且属于当前用户
     result = await db.execute(
         select(Inventory).where(
@@ -188,6 +229,11 @@ async def list_item(
     await db.refresh(listing)
     await db.refresh(inventory)
     
+    # 保存幂等性响应
+    if idempotency_key:
+        response_data = ListingResponse.model_validate(listing).model_dump()
+        await save_idempotent_response(internal_key, response_data)
+    
     return listing
 
 
@@ -195,9 +241,23 @@ async def list_item(
 async def unlist_item(
     listing_id: int,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")
 ):
-    """下架饰品"""
+    """下架饰品（支持幂等性）"""
+    # 幂等性检查
+    if idempotency_key:
+        internal_key = generate_idempotency_key(
+            user_id=current_user.id,
+            method="POST",
+            path="/api/v1/inventory/unlist",
+            request_body=str(listing_id)
+        )
+        is_duplicate, cached_response = await check_idempotency(internal_key)
+        if is_duplicate and cached_response:
+            logger.info(f"检测到重复下架请求，key: {idempotency_key}")
+            return ListingResponse(**cached_response)
+    
     # 验证上架记录存在且属于当前用户
     result = await db.execute(
         select(Listing).where(
@@ -234,6 +294,11 @@ async def unlist_item(
     await db.commit()
     await db.refresh(listing)
     await db.refresh(inventory)
+    
+    # 保存幂等性响应
+    if idempotency_key:
+        response_data = ListingResponse.model_validate(listing).model_dump()
+        await save_idempotent_response(internal_key, response_data)
     
     return listing
 
@@ -333,9 +398,24 @@ async def delete_inventory_item(
 async def batch_list_items(
     batch_data: BatchListingRequest,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")
 ):
-    """批量上架"""
+    """批量上架（支持幂等性）"""
+    # 幂等性检查
+    if idempotency_key:
+        request_body = json.dumps(batch_data.model_dump(), sort_keys=True)
+        internal_key = generate_idempotency_key(
+            user_id=current_user.id,
+            method="POST",
+            path="/api/v1/inventory/batch_list",
+            request_body=request_body
+        )
+        is_duplicate, cached_response = await check_idempotency(internal_key)
+        if is_duplicate and cached_response:
+            logger.info(f"检测到重复批量上架请求，key: {idempotency_key}")
+            return BatchResponse(**cached_response)
+    
     success_count = 0
     failed_count = 0
     failed_ids = []
@@ -378,22 +458,43 @@ async def batch_list_items(
                 failed_count += 1
                 failed_ids.append(inv_id)
     
-    return BatchResponse(
-        success=failed_count == 0,
-        message=f"批量上架完成，成功 {success_count} 个，失败 {failed_count} 个",
-        success_count=success_count,
-        failed_count=failed_count,
-        failed_ids=failed_ids
-    )
+    response_data = {
+        "success": failed_count == 0,
+        "message": f"批量上架完成，成功 {success_count} 个，失败 {failed_count} 个",
+        "success_count": success_count,
+        "failed_count": failed_count,
+        "failed_ids": failed_ids
+    }
+    
+    # 保存幂等性响应
+    if idempotency_key:
+        await save_idempotent_response(internal_key, response_data)
+    
+    return BatchResponse(**response_data)
 
 
 @router.post("/batch_unlist", response_model=BatchResponse)
 async def batch_unlist_items(
     batch_data: BatchUnlistRequest,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")
 ):
-    """批量下架"""
+    """批量下架（支持幂等性）"""
+    # 幂等性检查
+    if idempotency_key:
+        request_body = json.dumps(batch_data.model_dump(), sort_keys=True)
+        internal_key = generate_idempotency_key(
+            user_id=current_user.id,
+            method="POST",
+            path="/api/v1/inventory/batch_unlist",
+            request_body=request_body
+        )
+        is_duplicate, cached_response = await check_idempotency(internal_key)
+        if is_duplicate and cached_response:
+            logger.info(f"检测到重复批量下架请求，key: {idempotency_key}")
+            return BatchResponse(**cached_response)
+    
     success_count = 0
     failed_count = 0
     failed_ids = []
@@ -431,10 +532,16 @@ async def batch_unlist_items(
                 failed_count += 1
                 failed_ids.append(listing_id)
     
-    return BatchResponse(
-        success=failed_count == 0,
-        message=f"批量下架完成，成功 {success_count} 个，失败 {failed_count} 个",
-        success_count=success_count,
-        failed_count=failed_count,
-        failed_ids=failed_ids
-    )
+    response_data = {
+        "success": failed_count == 0,
+        "message": f"批量下架完成，成功 {success_count} 个，失败 {failed_count} 个",
+        "success_count": success_count,
+        "failed_count": failed_count,
+        "failed_ids": failed_ids
+    }
+    
+    # 保存幂等性响应
+    if idempotency_key:
+        await save_idempotent_response(internal_key, response_data)
+    
+    return BatchResponse(**response_data)

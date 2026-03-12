@@ -183,7 +183,7 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     async def health_check():
-        """健康检查端点"""
+        """健康检查端点（带超时控制）"""
         import platform
         import sys
         
@@ -213,26 +213,43 @@ def create_app() -> FastAPI:
 
     @app.get("/health/ready")
     async def readiness_check():
-        """就绪检查 - 检查所有依赖服务"""
+        """就绪检查 - 检查所有依赖服务（带超时控制）"""
         global _cache_degraded
         checks = {}
         
-        # 检查数据库（使用参数化查询防止SQL注入）
+        # 健康检查超时配置
+        HEALTH_CHECK_TIMEOUT = 5  # 秒
+        
+        # 检查数据库（使用参数化查询防止SQL注入，带超时控制）
         try:
             from app.core.database import engine
             from sqlalchemy import text
             async with engine.connect() as conn:
-                await conn.execute(text("SELECT 1"))
+                await asyncio.wait_for(
+                    conn.execute(text("SELECT 1")),
+                    timeout=HEALTH_CHECK_TIMEOUT
+                )
             checks["database"] = "healthy"
+        except asyncio.TimeoutError:
+            checks["database"] = "unhealthy: timeout"
         except Exception as e:
             checks["database"] = f"unhealthy: {str(e)}"
         
-        # 检查 Redis/缓存
+        # 检查 Redis/缓存（带超时控制）
         try:
             from app.core.redis_manager import get_redis
             redis_client = await get_redis()
-            await redis_client.ping()
+            await asyncio.wait_for(
+                redis_client.ping(),
+                timeout=HEALTH_CHECK_TIMEOUT
+            )
             checks["cache"] = "healthy"
+        except asyncio.TimeoutError:
+            # 缓存降级不影响整体可用性
+            if _cache_degraded:
+                checks["cache"] = "degraded: timeout"
+            else:
+                checks["cache"] = "unhealthy: timeout"
         except Exception as e:
             # 缓存降级不影响整体可用性
             if _cache_degraded:
@@ -240,13 +257,19 @@ def create_app() -> FastAPI:
             else:
                 checks["cache"] = f"unhealthy: {str(e)}"
         
-        # 检查 Steam API
+        # 检查 Steam API（带超时控制）
         try:
             steam_api = get_steam_api()
-            if await steam_api.health_check():
+            result = await asyncio.wait_for(
+                steam_api.health_check(),
+                timeout=HEALTH_CHECK_TIMEOUT
+            )
+            if result:
                 checks["steam_api"] = "healthy"
             else:
                 checks["steam_api"] = "degraded"
+        except asyncio.TimeoutError:
+            checks["steam_api"] = "unhealthy: timeout"
         except Exception as e:
             checks["steam_api"] = f"unhealthy: {str(e)}"
         

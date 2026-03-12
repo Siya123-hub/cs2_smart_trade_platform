@@ -51,6 +51,7 @@ class Bot(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # 关联
+    # trades = relationship("BotTrade", back_populates="bot")
     # monitor_tasks = relationship("MonitorTask", back_populates="bot")
 
     # 属性：用于解密访问
@@ -130,3 +131,6 @@ class BotTrade(Base):
         Index("idx_bot_trades_bot_id", "bot_id"),
         Index("idx_bot_trades_status", "status"),
     )
+    
+    # 关联
+    bot = relationship("Bot", back_populates="trades")

@@ -115,7 +115,7 @@ class BuffAPI:
         self.cookie = cookie
         self.last_request_time = 0
         self.min_interval = settings.BUFF_API_INTERVAL
-        # 问题8：重试状态追踪
+        # 重试状态追踪
         self._retry_states: Dict[str, RetryState] = {}
         # 集成反爬虫管理器
         self._anti_crawler = get_anti_crawler()
@@ -198,7 +198,7 @@ class BuffAPI:
         max_retries: int = None,
         **kwargs
     ) -> Dict[str, Any]:
-        """发送请求 (带频率控制和重试机制) - 问题8：添加重试状态追踪"""
+        """发送请求 (带频率控制和重试机制)"""
         max_retries = max_retries or self.MAX_RETRIES
         retry_count = 0
         # 提取endpoint用于追踪
@@ -267,7 +267,7 @@ class BuffAPI:
                     if data.get("code") != "OK":
                         raise Exception(f"BUFF API Error: {data.get('message', 'Unknown error')}")
                     
-                    # 问题8：记录成功
+                    # 记录成功
                     retry_state.total_attempts += 1
                     retry_state.successful_attempts += 1
                     retry_state.last_attempt_time = datetime.utcnow()

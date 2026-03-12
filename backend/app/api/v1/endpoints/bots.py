@@ -6,6 +6,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, status, Query, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, update
+from sqlalchemy.orm import selectinload
 from datetime import datetime
 import json
 
@@ -46,7 +47,10 @@ async def get_bots(
     db: AsyncSession = Depends(get_db)
 ):
     """获取机器人列表"""
-    query = select(Bot).where(Bot.owner_id == current_user.id)
+    # 预加载关联数据避免 N+1 查询
+    query = select(Bot).where(Bot.owner_id == current_user.id).options(
+        selectinload(Bot.trades)
+    )
 
     if status:
         query = query.where(Bot.status == status)

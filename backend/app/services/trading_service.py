@@ -21,12 +21,12 @@ from app.core.response import ServiceResponse, success_response, error_response
 from app.core.task_registry import get_task_registry
 # 导入 validators 中的验证函数
 from app.utils.validators import (
-    validate_price as validator_validate_price,
-    validate_quantity as validator_validate_quantity,
-    validate_item_id as validator_validate_item_id,
-    validate_user_id as validator_validate_user_id,
-    validate_min_profit as validator_validate_min_profit,
-    validate_limit as validator_validate_limit,
+    validate_price,
+    validate_quantity,
+    validate_item_id,
+    validate_user_id,
+    validate_min_profit,
+    validate_limit,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,6 +44,8 @@ class TradingEngine:
         self.steam_api = get_steam_api()
         self.steam_market = get_steam_market_service()
         self._task_registry = get_task_registry()
+        # 并发控制锁 - 保护 execute_arbitrage 方法
+        self._arbitrage_lock = asyncio.Lock()
         # 导入通知服务
         from app.services.notification_service import NotificationService, NotificationType, NotificationPriority
         self.notification_service = NotificationService()
@@ -96,8 +98,8 @@ class TradingEngine:
     ) -> ServiceResponse:
         """获取搬砖机会"""
         # 输入验证（使用 validators.py 中的函数）
-        validator_validate_min_profit(min_profit)
-        validator_validate_limit(limit)
+        validate_min_profit(min_profit)
+        validate_limit(limit)
         
         # 查询所有饰品
         result = await self.db.execute(
@@ -145,10 +147,10 @@ class TradingEngine:
     ) -> Dict[str, Any]:
         """执行买入 (带超时控制)"""
         # 输入验证（使用 validators.py 中的函数）
-        validator_validate_item_id(item_id)
-        validator_validate_price(max_price, "max_price")
-        validator_validate_quantity(quantity)
-        validator_validate_user_id(user_id)
+        validate_item_id(item_id)
+        validate_price(max_price)
+        validate_quantity(quantity)
+        validate_user_id(user_id)
         
         if not self.buff_client:
             raise Exception("未设置 BUFF 客户端")
@@ -165,7 +167,7 @@ class TradingEngine:
         if not item:
             raise Exception("饰品不存在")
         
-        # 获取当前价格 (带超时控制) - 问题5：统一超时返回类型
+        # 获取当前价格 (带超时控制)
         try:
             current_price = await asyncio.wait_for(
                 self.buff_client.get_price_overview(item.market_hash_name),
@@ -271,29 +273,31 @@ class TradingEngine:
         if user_id is None:
             raise ValueError("execute_arbitrage 必须提供 user_id 参数")
         
-        # 注册任务到 TaskRegistry 以便追踪
-        task_name = f"arbitrage_{item_id}_{datetime.utcnow().timestamp()}"
-        
-        async def do_arbitrage():
-            return await self._execute_arbitrage_internal(
-                item_id, buy_platform, sell_platform, 
-                sell_price, quantity, user_id, timeout
+        # 使用锁保护并发执行
+        async with self._arbitrage_lock:
+            # 注册任务到 TaskRegistry 以便追踪
+            task_name = f"arbitrage_{item_id}_{datetime.utcnow().timestamp()}"
+            
+            async def do_arbitrage():
+                return await self._execute_arbitrage_internal(
+                    item_id, buy_platform, sell_platform, 
+                    sell_price, quantity, user_id, timeout
+                )
+            
+            # 使用 TaskRegistry 注册任务
+            # 修改：TaskRegistry.register 需要传入函数和参数，而不是已执行的结果
+            task_id = await self._task_registry.register(
+                task_name,
+                do_arbitrage  # 传入协程函数
             )
-        
-        # 使用 TaskRegistry 注册任务
-        # 修改：TaskRegistry.register 需要传入函数和参数，而不是已执行的结果
-        task_id = await self._task_registry.register(
-            task_name,
-            do_arbitrage  # 传入协程函数
-        )
-        
-        # 异步执行任务
-        await self._task_registry.run(task_id, wait=False)
-        
-        return ServiceResponse.ok(
-            data={"task_id": task_id, "task_name": task_name},
-            message="搬砖任务已启动"
-        )
+            
+            # 异步执行任务
+            await self._task_registry.run(task_id, wait=False)
+            
+            return ServiceResponse.ok(
+                data={"task_id": task_id, "task_name": task_name},
+                message="搬砖任务已启动"
+            )
     
     async def _execute_arbitrage_internal(
         self,
@@ -330,7 +334,7 @@ class TradingEngine:
         
         buy_order_id = buy_result.data.get("order_id") if buy_result.data else None
         
-        # 问题3：使用轮询方式等待到账，而非硬等待
+        # 使用轮询方式等待到账
         logger.info(f"买入完成，开始等待到账: order_id={buy_order_id}")
         order_completed, buy_order = await self._wait_for_order_settlement(buy_order_id)
         
@@ -354,7 +358,7 @@ class TradingEngine:
             # 如果设置了自动卖出
             if settings.AUTO_CONFIRM:
                 try:
-                    # 问题1：修复状态检查逻辑 - 使用轮询后的订单状态
+                    # 修复状态检查逻辑 - 使用轮询后的订单状态
                     # 注意：轮询已确认订单状态为completed，这里直接创建卖出订单
                     
                     # 创建卖出订单记录
@@ -373,11 +377,47 @@ class TradingEngine:
                     
                     # 尝试上架到 Steam 市场（如果配置了 Steam 认证信息）
                     if self.steam_market.steam_login or self.steam_market.webcookie:
-                        # 注意：实际上架需要物品的 asset_id，这里记录为待上架
-                        logger.info(
-                            f"卖出订单创建成功: order_id={sell_order.order_id}, "
-                            f"item={item.name}, price={sell_price}, user_id={user_id}"
-                        )
+                        # 尝试获取库存以获取 asset_id
+                        asset_id = None
+                        try:
+                            # 从 BUFF 获取已购物品信息
+                            # 这里应该从 BUFF 订单确认后获取 asset_id
+                            # 暂时通过 Steam API 获取库存
+                            inventory_result = await self._get_inventory_for_sale(
+                                market_hash_name=item.market_hash_name,
+                                app_id=730
+                            )
+                            if inventory_result and len(inventory_result) > 0:
+                                asset_id = inventory_result[0].get("asset_id")
+                        except Exception as e:
+                            logger.warning(f"获取库存失败: {e}")
+                        
+                        # 如果获取到 asset_id，尝试实际上架
+                        if asset_id:
+                            try:
+                                listing_result = await self.steam_market.create_listing(
+                                    asset_id=asset_id,
+                                    app_id=730,
+                                    price=sell_price,
+                                    market_hash_name=item.market_hash_name,
+                                    quantity=quantity
+                                )
+                                if listing_result.get("success"):
+                                    sell_order.status = "listed"
+                                    await self.db.commit()
+                                    logger.info(
+                                        f"卖出订单创建并实际上架成功: order_id={sell_order.order_id}, "
+                                        f"listing_id={listing_result.get('listing_id')}"
+                                    )
+                                else:
+                                    logger.warning(f"实际上架失败: {listing_result.get('error', '未知错误')}")
+                            except Exception as e:
+                                logger.warning(f"调用上架API异常: {e}")
+                        else:
+                            logger.info(
+                                f"卖出订单创建成功（待上架）: order_id={sell_order.order_id}, "
+                                f"item={item.name}, price={sell_price}, user_id={user_id}"
+                            )
                         
                         sell_result = ServiceResponse.ok(
                             data={
@@ -429,6 +469,43 @@ class TradingEngine:
         """根据监控规则自动买入"""
         return await self.execute_buy(item_id, max_price)
     
+    async def _get_inventory_for_sale(
+        self,
+        market_hash_name: str,
+        app_id: int = 730
+    ) -> List[Dict[str, Any]]:
+        """
+        获取可用于出售的库存物品
+        
+        Args:
+            market_hash_name: 物品的市场哈希名称
+            app_id: Steam App ID
+            
+        Returns:
+            可用于出售的物品列表
+        """
+        # 尝试获取 Steam 库存
+        try:
+            # 使用 Steam API 获取库存
+            inventory = await self.steam_api.get_inventory(app_id=app_id)
+            if inventory.get("success"):
+                assets = inventory.get("assets", [])
+                # 过滤出目标物品
+                matching_items = [
+                    {
+                        "asset_id": asset.get("id"),
+                        "market_hash_name": asset.get("market_hash_name", ""),
+                        "app_id": asset.get("appid"),
+                    }
+                    for asset in assets
+                    if market_hash_name in asset.get("market_hash_name", "")
+                ]
+                return matching_items
+        except Exception as e:
+            logger.warning(f"获取 Steam 库存失败: {e}")
+        
+        return []
+    
     async def _wait_for_order_settlement(
         self,
         order_id: str,
@@ -436,7 +513,7 @@ class TradingEngine:
         check_interval: int = 5
     ) -> Tuple[bool, Optional[Order]]:
         """
-        等待订单到账（轮询方式）- 问题3：搬砖等待使用硬睡眠
+        等待订单到账（轮询方式）
         
         Args:
             order_id: 订单ID

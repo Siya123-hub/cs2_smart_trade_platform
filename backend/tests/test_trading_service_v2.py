@@ -11,6 +11,7 @@ from app.services.trading_service import TradingEngine, DEFAULT_TIMEOUT
 from app.models.item import Item
 from app.models.order import Order
 from app.models.inventory import Inventory
+from app.models.user import User
 from app.core.response import ServiceResponse
 
 
@@ -192,7 +193,8 @@ class TestTradingEngine:
             result = await engine.execute_arbitrage(
                 item_id=1,
                 buy_platform="buff",
-                sell_platform="steam"
+                sell_platform="steam",
+                user_id=1
             )
         
         # 验证买入订单创建
@@ -222,6 +224,7 @@ class TestTradingEngine:
         # 有效数量
         validate_quantity(1)
         validate_quantity(100)
+        validate_quantity(1000)  # 边界值
         
         # 无效数量
         with pytest.raises(ValueError):
@@ -231,7 +234,7 @@ class TestTradingEngine:
             validate_quantity(-1)
         
         with pytest.raises(ValueError):
-            validate_quantity(1000)  # 超过最大限制
+            validate_quantity(1001)  # 超过最大限制
 
     @pytest.mark.asyncio
     async def test_validate_min_profit(self):

@@ -208,7 +208,7 @@ class PriceMonitor:
             # 启动锁续期任务 - 保存任务引用
             self._background_tasks.append(asyncio.create_task(self._lock_renewal(lock)))
         else:
-            # 锁获取失败，作为备用节点 - 问题7：监控服务锁失败无降级
+            # 锁获取失败，作为备用节点运行
             logger.info(f"主节点锁获取失败，作为备用节点运行 (节点: {self.node_id})")
             self.running = True
             # 备用节点执行有限任务（监听告警和检查搬砖机会）
@@ -347,7 +347,7 @@ class PriceMonitor:
     
     async def _backup_alert_listener(self):
         """
-        备用节点告警监听任务 - 问题7：监控服务锁失败无降级
+        备用节点告警监听任务
         
         备用节点只执行监听任务，不执行实际操作。
         监控 Redis 通道，接收主节点发送的告警通知。
