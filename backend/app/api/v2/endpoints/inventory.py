@@ -32,6 +32,32 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+@router.get("/stats")
+async def get_inventory_stats(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取库存统计 v2 (简短版本)"""
+    # 简化的统计数据
+    total_result = await db.execute(
+        select(func.count(Inventory.id)).where(Inventory.user_id == current_user.id)
+    )
+    total = total_result.scalar() or 0
+    
+    status_result = await db.execute(
+        select(Inventory.status, func.count(Inventory.id))
+        .where(Inventory.user_id == current_user.id)
+        .group_by(Inventory.status)
+    )
+    status_counts = {row[0]: row[1] for row in status_result.all()}
+    
+    return {
+        "total": total,
+        "owned": status_counts.get('owned', 0),
+        "listed": status_counts.get('listed', 0)
+    }
+
+
 @router.get("/stats/summary")
 async def get_inventory_summary(
     current_user: User = Depends(get_current_user),

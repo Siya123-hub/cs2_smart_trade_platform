@@ -144,7 +144,7 @@ async def search_items(
     keyword: str = Query(..., min_length=1, description="搜索关键词"),
     limit: int = Query(20, ge=1, le=100, description="返回结果数量限制"),
     db: AsyncSession = Depends(get_db),
-) -> dict:
+) -> ItemListResponse:
     """
     搜索饰品
     
@@ -209,7 +209,11 @@ async def search_items(
     result = await db.execute(query)
     items = result.scalars().all()
     
-    return {"items": items, "total": total}
+    # Convert SQLAlchemy models to ItemResponse for proper serialization
+    return {
+        "items": [ItemResponse.model_validate(item) for item in items],
+        "total": total
+    }
 
 
 @router.get("/{item_id}", response_model=ItemResponse)

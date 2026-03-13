@@ -115,7 +115,7 @@ async def test_v2_inventory_batch_unlist(client: AsyncClient, test_db: AsyncSess
         "/api/v2/inventory/batch-unlist",
         headers=headers,
         json={
-            "item_ids": [inv1.id, inv2.id]
+            "listing_ids": [inv1.id, inv2.id]
         }
     )
     assert response.status_code in [200, 401]

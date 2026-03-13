@@ -185,6 +185,60 @@ async def create_order(
     return response_data
 
 
+@router.get("/statistics")
+async def get_order_statistics(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """获取订单统计信息"""
+    from sqlalchemy import case
+    
+    # 统计订单总数
+    total_result = await db.execute(
+        select(func.count()).select_from(Order).where(Order.user_id == current_user.id)
+    )
+    total = total_result.scalar() or 0
+    
+    # 统计各状态订单数量
+    status_result = await db.execute(
+        select(
+            Order.status,
+            func.count(Order.id).label('count')
+        ).where(Order.user_id == current_user.id).group_by(Order.status)
+    )
+    status_counts = {row.status: row.count for row in status_result.all()}
+    
+    # 统计总收入和支出
+    revenue_result = await db.execute(
+        select(
+            func.sum(
+                case(
+                    (Order.side == 'sell', Order.price),
+                    else_=0
+                )
+            ).label('revenue'),
+            func.sum(
+                case(
+                    (Order.side == 'buy', Order.price),
+                    else_=0
+                )
+            ).label('expense')
+        ).where(Order.user_id == current_user.id, Order.status == 'completed')
+    )
+    revenue_row = revenue_result.one_or_none()
+    
+    return {
+        "total": total,
+        "pending": status_counts.get('pending', 0),
+        "processing": status_counts.get('processing', 0),
+        "completed": status_counts.get('completed', 0),
+        "cancelled": status_counts.get('cancelled', 0),
+        "failed": status_counts.get('failed', 0),
+        "revenue": float(revenue_row.revenue or 0),
+        "expense": float(revenue_row.expense or 0)
+    }
+
+
 @router.get("/{order_id}", response_model=OrderResponse)
 async def get_order(
     order_id: str,

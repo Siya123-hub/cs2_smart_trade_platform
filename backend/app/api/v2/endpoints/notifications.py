@@ -326,6 +326,29 @@ async def mark_all_as_read(
     return {"message": "所有通知已标记为已读"}
 
 
+@router.post("/read-all")
+async def mark_all_as_read_post(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """标记所有通知为已读 (POST版本)"""
+    await db.execute(
+        update(Notification)
+        .where(
+            Notification.user_id == current_user.id,
+            Notification.is_read == False
+        )
+        .values(
+            is_read=True,
+            status=NotificationStatus.READ,
+            read_at=datetime.utcnow()
+        )
+    )
+    await db.commit()
+    
+    return {"message": "所有通知已标记为已读"}
+
+
 @router.delete("/{notification_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_notification(
     notification_id: int,

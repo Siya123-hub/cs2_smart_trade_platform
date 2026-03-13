@@ -25,11 +25,16 @@ async def create_test_user(test_db: AsyncSession, username: str = "testuser") ->
     return user
 
 
-async def create_test_bot(test_db: AsyncSession, user: User, name: str = "Test Bot") -> Bot:
+async def create_test_bot(test_db: AsyncSession, user: User, name: str = "Test Bot", steam_id: str = None) -> Bot:
     """创建测试机器人"""
+    # Use a default unique steam_id if not provided
+    if steam_id is None:
+        import time
+        steam_id = str(int(time.time() * 1000))[-9:]  # Generate unique ID based on timestamp
+    
     bot = Bot(
         name=name,
-        steam_id="123456789",
+        steam_id=steam_id,
         username="testbot",
         status="online",
         owner_id=user.id,
@@ -59,12 +64,8 @@ async def test_v2_bots_batch_status_update(client: AsyncClient, test_db: AsyncSe
     bot2 = await create_test_bot(test_db, user, "Bot 2")
     
     response = await client.post(
-        "/api/v2/bots/batch-status",
-        headers=headers,
-        json={
-            "bot_ids": [bot1.id, bot2.id],
-            "status": "online"
-        }
+        "/api/v2/bots/batch-status?status=online",
+        headers=headers
     )
     assert response.status_code in [200, 401, 404]
 

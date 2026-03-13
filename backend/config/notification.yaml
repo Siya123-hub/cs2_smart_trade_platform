@@ -1,0 +1,44 @@
+# CS2 智能交易平台 - 通知配置
+# 启用多渠道通知支持
+
+notifications:
+  # 全局开关
+  enabled: true
+  
+  # 通知渠道配置
+  channels:
+    # 邮件通知
+    email:
+      enabled: false
+      smtp:
+        host: smtp.gmail.com
+        port: 587
+        username: ""
+        password: ""
+        use_tls: true
+      from_name: "CS2 Trader"
+      from_email: "noreply@example.com"
+      recipients:
+        - "user@example.com"
+    
+    # Slack 通知
+    slack:
+      enabled: false
+      webhook_url: ""
+      username: "CS2 Trader"
+      icon_emoji: ":robot_face:"
+      channel: ""  # 可选: 指定默认频道
+    
+    # Discord 通知
+    discord:
+      enabled: false
+      webhook_url: ""
+      username: "CS2 Trader"
+      avatar_url: ""  # 可选: 机器人头像
+    
+    # Telegram 通知
+    telegram:
+      enabled: false
+      bot_token: ""
+      chat_ids: []
+      parse_mode: "Markdown"  # Markdown 或 HTML

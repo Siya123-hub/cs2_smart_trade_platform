@@ -209,6 +209,7 @@ def print_summary(results: List[Dict[str, Any]]):
     print("="*60)
 
 
+@pytest.mark.skip(reason="需要测试服务器运行")
 @pytest.mark.asyncio
 async def test_benchmark_items():
     """测试饰品列表性能"""
@@ -268,6 +269,7 @@ def benchmark_results():
     return results
 
 
+@pytest.mark.skip(reason="需要测试服务器运行")
 def test_performance_check(benchmark_results):
     """性能检查测试"""
     assert len(benchmark_results) > 0

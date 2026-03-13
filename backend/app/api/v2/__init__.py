@@ -235,7 +235,7 @@ async def get_stats_summary_v2(
     
     # 订单统计
     orders_result = await db.execute(
-        select(func.count(), func.sum(Order.total_price))
+        select(func.count(), func.sum(Order.price))
         .where(Order.user_id == current_user.id)
     )
     orders_count, orders_sum = orders_result.first()
@@ -292,7 +292,7 @@ async def get_realtime_stats(
     
     # 订单统计
     orders_result = await db.execute(
-        select(func.count(), func.sum(Order.total_price))
+        select(func.count(), func.sum(Order.price))
         .where(Order.user_id == current_user.id)
     )
     orders_count, orders_sum = orders_result.first()

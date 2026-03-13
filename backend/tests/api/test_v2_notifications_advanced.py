@@ -61,7 +61,7 @@ async def test_v2_notifications_mark_all_read(client: AsyncClient, test_db: Asyn
     await create_test_notification(test_db, user, "price_alert")
     await create_test_notification(test_db, user, "trade_offer")
     
-    response = await client.post("/api/v2/notifications/mark-all-read", headers=headers)
+    response = await client.post("/api/v2/notifications/read-all", headers=headers)
     assert response.status_code in [200, 401]
 
 
