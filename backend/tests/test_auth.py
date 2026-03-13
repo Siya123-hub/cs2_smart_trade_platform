@@ -154,6 +154,7 @@ async def test_logout(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="需要真实Redis实例进行集成测试")
 async def test_login_atomic_race_condition():
     """
     测试登录尝试原子性 (第44轮 P0)

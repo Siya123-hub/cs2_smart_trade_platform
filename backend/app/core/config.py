@@ -96,6 +96,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = Field(default="", description="JWT 密钥，必须在环境变量中设置")
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24小时
+    REFRESH_TOKEN_EXPIRE_MINUTES: int = 10080  # 7天
 
     # 加密密钥 - 用于敏感信息加密
     ENCRYPTION_KEY: str = Field(default="", description="加密密钥，必须在环境变量中设置")

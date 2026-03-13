@@ -10,9 +10,27 @@ from starlette.responses import JSONResponse
 from app.middleware.audit import AuditLogger, get_audit_logger, audit_middleware
 
 
+class MockState:
+    """模拟请求state对象（无user_id时）"""
+    def __init__(self):
+        self._data = {}
+    
+    def __setattr__(self, name, value):
+        if name.startswith('_'):
+            super().__setattr__(name, value)
+        else:
+            self._data[name] = value
+    
+    def __getattr__(self, name):
+        if name.startswith('_'):
+            raise AttributeError(name)
+        if name in self._data:
+            return self._data[name]
+        raise AttributeError(name)
+
 class MockRequest:
     """模拟请求对象"""
-    def __init__(self, method="GET", path="/api/v1/test", client_ip="127.0.0.1"):
+    def __init__(self, method="GET", path="/api/v1/test", client_ip="127.0.0.1", include_user=False):
         self.method = method
         self.url = MagicMock()
         self.url.path = path
@@ -23,7 +41,13 @@ class MockRequest:
         self.client = MagicMock()
         self.client.host = client_ip
         self.query_params = {}
-        self.state = MagicMock()
+        # 使用MockState而不是MagicMock，确保hasattr正确工作
+        if include_user:
+            self.state = MagicMock()
+            self.state.user_id = 123
+            self.state.username = "testuser"
+        else:
+            self.state = MockState()
         self._body = None
     
     async def body(self):
@@ -346,17 +370,19 @@ class TestAuditLoggerEdgeCases:
     """审计日志边界情况测试"""
     
     def test_custom_audit_patterns(self):
-        """测试自定义审计模式"""
-        # 创建自定义审计日志器
-        custom_patterns = {
-            "POST:/api/v1/custom": {"action": "custom_action", "level": "info"}
-        }
-        
-        # 验证模式存在
+        """测试审计模式匹配"""
+        # 测试默认模式存在
         logger = AuditLogger()
         
-        config = logger._match_pattern("POST", "/api/v1/custom")
-        assert config["action"] == "custom_action"
+        # 验证登录模式存在
+        config = logger._match_pattern("POST", "/api/v1/auth/login")
+        assert config is not None
+        assert config["action"] == "user_login"
+        
+        # 验证前缀匹配（orders）
+        config = logger._match_pattern("POST", "/api/v1/orders/create")
+        assert config is not None
+        assert config["action"] == "order_create"
     
     def test_all_audit_levels(self):
         """测试所有审计级别"""

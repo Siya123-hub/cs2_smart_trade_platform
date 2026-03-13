@@ -27,9 +27,9 @@ TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
 @pytest.fixture(scope="function")
 def event_loop():
-    """创建事件循环 - 每个测试函数使用独立的循环"""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    """创建事件循环 - 使用 pytest-asyncio 的默认事件循环"""
+    import asyncio
+    loop = asyncio.get_event_loop_policy().new_event_loop()
     yield loop
     loop.close()
 
@@ -56,20 +56,33 @@ def mock_redis():
     mock.publish = AsyncMock(return_value=1)
     mock.ping = AsyncMock(return_value=True)
     mock.close = AsyncMock()
+    # Lua脚本执行 - 返回一个列表 [can_login, attempts, message]
+    mock.eval = AsyncMock(return_value=[1, 0, ""])
+    mock.evalsha = AsyncMock(return_value=[1, 0, ""])
     return mock
 
 
 @pytest.fixture(autouse=True)
 def patch_redis(mock_redis):
     """自动 mock 所有 Redis 连接"""
+    async def mock_get_redis():
+        return mock_redis
+    
+    # patch多个位置以确保所有导入路径都被mock
     with patch('redis.asyncio.Redis', return_value=mock_redis):
         with patch('redis.Redis', return_value=mock_redis):
-            yield mock_redis
+            with patch('app.core.redis_manager.redis', mock_redis):
+                with patch('app.core.session_manager.redis', mock_redis):
+                    with patch('app.core.redis_manager.get_redis', mock_get_redis):
+                        yield mock_redis
 
 
 @pytest_asyncio.fixture(scope="function")
 async def test_db() -> AsyncGenerator[AsyncSession, None]:
     """测试数据库"""
+    # 导入所有模型以确保它们被注册到Base.metadata
+    from app.models import user, bot, inventory, item, monitor, notification, order
+    
     from app.core.database import Base
     engine = create_async_engine(
         TEST_DATABASE_URL,
@@ -102,7 +115,7 @@ async def client(test_db: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     app.dependency_overrides[get_db] = override_get_db
     
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+    async with AsyncClient(transport=transport, base_url="http://test", follow_redirects=True) as ac:
         yield ac
     
     app.dependency_overrides.clear()

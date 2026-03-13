@@ -43,7 +43,7 @@ class MemoryRateLimiter:
             request_count = len(self._data.get(key, []))
             
             if request_count >= limit:
-                oldest = min(self._data.get(key, [current_time])) if self._data.get(key) else time.time()
+                oldest = min(self._data.get(key, [time.time()])) if self._data.get(key) else time.time()
                 retry_after = int(window - (time.time() - oldest)) + 1
                 
                 logger.warning(f"Memory rate limit exceeded for {key}: {request_count}/{limit}")

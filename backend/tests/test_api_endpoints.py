@@ -159,7 +159,9 @@ async def test_authenticated_orders_list(client, auth_token):
         headers={"Authorization": f"Bearer {auth_token}"}
     )
     assert response.status_code == 200
-    assert "data" in response.json() or isinstance(response.json(), list)
+    # 订单列表返回可能是分页格式 {'orders': [...], 'page': ...} 或列表
+    data = response.json()
+    assert "orders" in data or isinstance(data, list)
 
 
 @pytest.mark.asyncio
