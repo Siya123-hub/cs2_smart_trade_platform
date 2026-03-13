@@ -103,6 +103,8 @@ class CacheEntry:
         if enable_avalanche_protection and ttl > 0:
             jitter = random.uniform(self.AVALANCHE_JITTER_MIN, self.AVALANCHE_JITTER_MAX)
             actual_ttl = int(ttl * jitter)
+            # 确保TTL至少为1秒，避免因抖动导致永不过期
+            actual_ttl = max(1, actual_ttl)
         else:
             actual_ttl = ttl
         self.expire_at = time.time() + actual_ttl if actual_ttl > 0 else float('inf')
