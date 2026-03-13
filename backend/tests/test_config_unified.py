@@ -112,7 +112,7 @@ class TestSettings:
 class TestSettingsValidation:
     """配置验证测试"""
     
-    @patch.dict('os.environ', {'SECRET_KEY': 'test_secret', 'ENCRYPTION_KEY': 'test_key'})
+    @patch.dict('os.environ', {'SECRET_KEY': '', 'ENCRYPTION_KEY': 'test_key'})
     def test_prod_requires_secret_key(self):
         """测试生产环境需要密钥"""
         from app.core.config import Settings

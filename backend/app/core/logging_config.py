@@ -225,6 +225,8 @@ class ContextFilter(logging.Filter):
         # 设置上下文
         for key, value in self._context.items():
             setattr(record, key, value)
+        # 同时设置 context 属性为完整的上下文字典
+        record.context = self._context
         return True
 
 

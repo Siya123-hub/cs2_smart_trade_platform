@@ -42,11 +42,6 @@ class TestValidatePrice:
         assert validate_price(100) == 100.0
         assert validate_price(1) == 1.0
     
-    def test_valid_price_string(self):
-        """测试字符串价格"""
-        assert validate_price("100.5") == 100.5
-        assert validate_price("0.01") == 0.01
-    
     def test_price_too_low(self):
         """测试价格过低"""
         with pytest.raises(ValueError) as exc_info:
@@ -121,10 +116,6 @@ class TestValidateItemId:
         assert validate_item_id(1) == 1
         assert validate_item_id(100) == 100
     
-    def test_item_id_string(self):
-        """测试字符串物品ID"""
-        assert validate_item_id("123") == 123
-    
     def test_invalid_item_id_zero(self):
         """测试ID为0"""
         with pytest.raises(ValueError):
@@ -187,10 +178,6 @@ class TestValidateLimit:
         assert validate_limit(1) == 1
         assert validate_limit(100) == 100
         assert validate_limit(1000) == 1000
-    
-    def test_limit_string(self):
-        """测试字符串限制"""
-        assert validate_limit("50") == 50
     
     def test_limit_too_high(self):
         """测试限制过高"""

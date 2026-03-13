@@ -39,12 +39,9 @@ def validate_price(price: Any, field_name: str = "price") -> float:
     Raises:
         ValueError: 价格验证失败
     """
-    # 类型检查
+    # 严格的类型检查 - 拒绝字符串
     if isinstance(price, str):
-        try:
-            price = float(price)
-        except (ValueError, TypeError):
-            raise ValueError(f"{field_name}必须是数字类型，无法转换为浮点数: {price}")
+        raise ValueError(f"{field_name}必须是数字类型，不能是字符串: {price}")
     
     if not isinstance(price, (int, float, Decimal)):
         raise ValueError(f"{field_name}必须是数字类型，当前类型: {type(price).__name__}")
@@ -106,11 +103,9 @@ def validate_item_id(item_id: Any) -> int:
     Raises:
         ValueError: ID验证失败
     """
+    # 严格的类型检查 - 拒绝字符串
     if isinstance(item_id, str):
-        try:
-            item_id = int(item_id)
-        except ValueError:
-            raise ValueError(f"物品ID必须是整数类型: {item_id}")
+        raise ValueError(f"物品ID必须是整数类型，不能是字符串: {item_id}")
     
     if not isinstance(item_id, int):
         raise ValueError(f"物品ID必须是整数类型，当前类型: {type(item_id).__name__}")
@@ -190,11 +185,9 @@ def validate_limit(limit: Any) -> int:
     Raises:
         ValueError: 验证失败
     """
+    # 严格的类型检查 - 拒绝字符串
     if isinstance(limit, str):
-        try:
-            limit = int(limit)
-        except ValueError:
-            raise ValueError(f"限制值必须是整数类型: {limit}")
+        raise ValueError(f"限制值必须是整数类型，不能是字符串: {limit}")
     
     if not isinstance(limit, int):
         raise ValueError(f"限制值必须是整数类型，当前类型: {type(limit).__name__}")
